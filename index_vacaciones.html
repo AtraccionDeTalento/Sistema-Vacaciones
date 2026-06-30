@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Sistema de Vacaciones · USIL</title>
+  <meta http-equiv="Cache-Control" content="no-cache,no-store,must-revalidate"/>
+  <meta http-equiv="Pragma" content="no-cache"/>
+  <meta http-equiv="Expires" content="0"/>
+  <link rel="stylesheet" href="assets/css/styles.css"/>
+</head>
+<body>
+
+<!-- ===== TOPBAR ===== -->
+<header class="topbar">
+  <div class="top-left">
+    <span class="top-icon">🏝️</span>
+    <div>
+      <div class="top-title">Sistema de Vacaciones</div>
+      <div class="top-sub">People Analytics · USIL</div>
+      <div class="top-upd" id="updatedAt">Actualizando...</div>
+    </div>
+  </div>
+  <div class="top-right">
+    <button class="btn" id="btnActualizarVac" title="Actualizar con el último reporte de Adryan"
+            style="background:#1f9d55;color:#fff;border-color:#1f9d55;font-weight:700">🔄 Actualizar vacaciones</button>
+    <button class="btn" id="btnConfigCola">☁️ Cloud Config</button>
+  </div>
+</header>
+
+<!-- ===== MAIN ===== -->
+<main class="wrap">
+
+  <!-- KPIs -->
+  <section class="kpis" id="panelKpis">
+    <div class="kcard kcard--blue interactive" id="kpiTotal" data-filter="con_meta" title="Colaboradores con objetivo de vacaciones este trimestre">
+      <span class="kcard-icon">🎯</span>
+      <span class="kcard-label">CON META</span>
+      <b class="kcard-num" id="kTotal"><span class="spin"></span></b>
+      <span class="kcard-foot" id="kTotalFoot">objetivo este trimestre</span>
+    </div>
+    <div class="kcard kcard--purple interactive" id="kpiSinMeta" data-filter="sin_meta_con_vac" title="Colaboradores sin objetivo pero que registraron vacaciones">
+      <span class="kcard-icon">🏖️</span>
+      <span class="kcard-label" style="font-size:9.5px!important">SIN META CON VAC.</span>
+      <b class="kcard-num" id="kSinMeta"><span class="spin"></span></b>
+      <span class="kcard-foot" id="kSinMetaFoot">tuvieron vacaciones</span>
+    </div>
+    <div class="kcard kcard--green interactive" id="kpiEleg" data-filter="cumplieron" title="Cumplieron su meta · clic para ver lista">
+      <span class="kcard-icon">✅</span>
+      <span class="kcard-label" id="lblConVac">CUMPLIERON</span>
+      <b class="kcard-num" id="kEleg"><span class="spin"></span></b>
+      <span class="kcard-foot" id="kElegFoot">con meta · sin meta</span>
+      <span class="kcard-days" id="kElegDays"></span>
+    </div>
+    <div class="kcard kcard--yellow interactive" id="kpiParciales" data-filter="parciales" title="Avance parcial — registraron días pero no completaron la meta">
+      <span class="kcard-icon">🔶</span>
+      <span class="kcard-label">PARCIALES</span>
+      <b class="kcard-num" id="kParciales"><span class="spin"></span></b>
+      <span class="kcard-foot" id="kParcialesFoot">en proceso</span>
+      <span class="kcard-days" id="kParcialesDays"></span>
+    </div>
+    <div class="kcard kcard--red interactive" id="kpiSinIniciar" data-filter="sin_iniciar" title="Con meta pero 0 días registrados — máxima alerta">
+      <span class="kcard-icon">⚠️</span>
+      <span class="kcard-label">SIN INICIAR</span>
+      <b class="kcard-num" id="kSinIniciar"><span class="spin"></span></b>
+      <span class="kcard-foot" id="kSinIniciarFoot">0 días gozados</span>
+    </div>
+    <div class="kcard kcard--avance interactive" id="kpiAlerta" data-filter="avance" title="Avance de la meta de vacaciones — clic para ver por Business Partner">
+      <span class="kcard-icon">📈</span>
+      <span class="kcard-label" id="lblSinVac">AVANCE DE META</span>
+      <b class="kcard-num" id="kAlerta"><span class="spin"></span></b>
+      <div class="kcard-bar"><div class="kcard-bar-fill" id="kAvanceBar"></div></div>
+      <span class="kcard-foot" id="kAvanceFoot">en tiempo real</span>
+      <div class="kcard-prediction" id="kPredictionWrap">
+        <span class="kcard-pred-icon">🔮</span>
+        <span class="kcard-pred-label">Prob. de cierre:</span>
+        <b class="kcard-pred-val" id="kCasi">—</b>
+      </div>
+      <div class="kcard-pred-range" id="kPredRange"></div>
+    </div>
+  </section>
+
+  <!-- Botón Ranking por Unidades de Negocio -->
+  <section class="area-ranking-toggle">
+    <button class="btn btn-brand" id="btnAreaRanking" title="Ver cumplimiento por unidades de negocio / gerencias / áreas">
+      🏢 Ranking por Unidades de Negocio
+    </button>
+  </section>
+
+  <!-- Wizard Envío Masivo -->
+  <section class="panel" style="border-left:4px solid #0f6ea5">
+    <!-- Cabecera wizard -->
+    <div class="wiz-header">
+      <div>
+        <h2 class="panel-h" style="margin-bottom:2px">📨 Envío de Mensajes a Jefaturas</h2>
+        <p class="muted">Notifica a los líderes de Talento y Cultura sobre el estado vacacional de su equipo. Sigue los 3 pasos.</p>
+      </div>
+      <div class="wkpis">
+        <div class="wkpi wkpi-with-info" id="sumLeadersWrap">
+          <span class="wkpi-n" id="sumLeaders">0</span>
+          <span class="wkpi-l" id="sumLeadersLabel">Jefes<br>detectados</span>
+          <button class="wkpi-info-btn" id="sumLeadersInfoBtn" title="¿Cómo se calcula este número?">ⓘ</button>
+          <div class="wkpi-popover" id="sumLeadersPopover">
+            <div class="wkpi-pop-title">¿Qué es este número?</div>
+            <ul class="wkpi-pop-list">
+              <li>✅ Personas <b>con meta pendiente</b> de cumplir este trimestre</li>
+              <li>❌ Excluye quienes <b>ya cumplieron</b> su objetivo (días gozados ≥ meta)</li>
+              <li>❌ Excluye <b>cesados</b> y colaboradores que ya no están en el Personal Maestro</li>
+            </ul>
+            <div class="wkpi-pop-note">Es menor que "Con meta" del dashboard porque ese cuenta el universo total con meta, sin descontar a los que ya cumplieron.</div>
+          </div>
+        </div>
+        <div class="wkpi"><span class="wkpi-n" id="sumSelected">0</span><span class="wkpi-l" id="sumSelectedLabel">Seleccionados<br>para enviar</span></div>
+        <div class="wkpi"><span class="wkpi-n" id="sumQueue">0</span><span class="wkpi-l" id="sumQueueLabel">Personas<br>objetivo</span></div>
+      </div>
+    </div>
+
+    <!-- Stepper -->
+    <div class="wizard-steps">
+      <div class="wstep active" id="wstep1" onclick="wizardGo(1)">
+        <span class="wstep-num">1</span>
+        <span class="wstep-text">
+          <span class="wstep-label">¿A quiénes enviar?</span>
+          <span class="wstep-sub">Selecciona jefaturas</span>
+        </span>
+      </div>
+      <span class="wstep-arrow">›</span>
+      <div class="wstep" id="wstep2" onclick="wizardGo(2)">
+        <span class="wstep-num">2</span>
+        <span class="wstep-text">
+          <span class="wstep-label">¿Qué mensaje?</span>
+          <span class="wstep-sub">Elige plantilla</span>
+        </span>
+      </div>
+      <span class="wstep-arrow">›</span>
+      <div class="wstep" id="wstep3" onclick="wizardGo(3)">
+        <span class="wstep-num">3</span>
+        <span class="wstep-text">
+          <span class="wstep-label">Confirmar y enviar</span>
+          <span class="wstep-sub">Revisar y lanzar</span>
+        </span>
+      </div>
+    </div>
+
+    <!-- Panel 1: Destinatarios -->
+    <div class="wizard-panel visible" id="wpanel1">
+      <div class="wpanel-section">
+        <div class="wbox-title" id="wizardRecipientTitle">👥 JEFATURAS GENERALES</div>
+        <div class="filter-row">
+          <select class="inp-sel" id="wizRecipientMode" onchange="wizardChangeRecipientMode()" style="max-width:210px">
+            <option value="personas" selected>Modo: Personas objetivo</option>
+            <option value="jefes">Modo: Jefaturas</option>
+          </select>
+          <input class="inp-txt" id="wizSearchJefe" placeholder="Buscar jefatura..." oninput="wizardFilterJefes()" style="flex:1;min-width:160px"/>
+          <select class="inp-sel" id="wizFilterBP" onchange="wizardFilterJefes()" style="flex:1"><option value="">Todos los BP</option></select>
+          <select class="inp-sel" id="wizFilterGerencia" onchange="wizardFilterJefes()" style="flex:1"><option value="">Todas las Gerencias</option></select>
+          <select class="inp-sel" id="wizFilterArea" onchange="wizardFilterJefes()" style="flex:1"><option value="">Todas las Áreas</option></select>
+          <button class="btn btn-toggle-lite" type="button" onclick="wizardSelAll(true)">✔ Todos</button>
+          <button class="btn btn-toggle-lite" type="button" onclick="wizardSelAll(false)">✕ Ninguno</button>
+        </div>
+        <div class="wizard-helper" id="wizardRecipientHelper">Cada jefatura funciona como un toggle: un clic la activa, otro la desactiva. Usa el chevron para ver sus áreas.</div>
+        <div id="jefesArbol" class="jefes-shell"><span class="spin"></span> Cargando jefes...</div>
+      </div>
+      <div class="wizard-actions">
+        <button class="btn btn-next" type="button" onclick="wizardGo(2)">Siguiente: elegir mensaje →</button>
+      </div>
+    </div>
+
+    <!-- Panel 2: Mensaje -->
+    <div class="wizard-panel" id="wpanel2">
+      <div class="wpanel-section">
+        <div class="wbox-title">💬 Elige una plantilla de mensaje</div>
+        <div class="template-grid" id="templateGrid">
+          <div class="template-card active" onclick="selectTemplate(this,'recordatorio')"><div class="tpl-icon">📋</div><div class="tpl-name">Programación 2T-2026</div><div class="tpl-desc">Mensaje oficial de Talento y Cultura</div></div>
+          <div class="template-card" onclick="selectTemplate(this,'urgente')"><div class="tpl-icon">⚠️</div><div class="tpl-name">Vacaciones por vencer</div><div class="tpl-desc">Para equipos con días próximos a expirar</div></div>
+          <div class="template-card" onclick="selectTemplate(this,'positivo')"><div class="tpl-icon">🌟</div><div class="tpl-name">Felicitación y seguimiento</div><div class="tpl-desc">Para equipos con buen avance</div></div>
+          <div class="template-card" onclick="selectTemplate(this,'personalizado')"><div class="tpl-icon">✏️</div><div class="tpl-name">Mensaje personalizado</div><div class="tpl-desc">Escribe tu propio mensaje</div></div>
+        </div>
+        <div class="wbox-title" style="margin-top:12px">Vista previa</div>
+        <div class="msg-preview-box" id="msgPreviewBox">Selecciona una plantilla para ver cómo se verá el mensaje.</div>
+        <div class="preview-live-note">Doble clic sobre el cuerpo, el aviso o la recomendación para editar el mensaje en tiempo real.</div>
+        <div id="customMsgEditor" class="custom-msg-editor hidden" aria-hidden="true">
+          <div class="custom-msg-editor-head">Editor del mensaje personalizado</div>
+          <div class="custom-msg-editor-sub">Puedes partir de una plantilla existente y ajustarla aquí. La vista previa se actualiza al instante.</div>
+          <input class="inp-txt custom-msg-input" id="txtAsunto" placeholder="Asunto del correo" oninput="updateMsgPreview()"/>
+          <textarea class="inp-txt custom-msg-input" id="txtMensaje" placeholder="Escribe aquí el cuerpo del mensaje personalizado" style="height:180px" oninput="updateMsgPreview()"></textarea>
+          <div class="two-col custom-msg-grid" style="gap:6px">
+            <textarea class="inp-txt custom-msg-input" id="txtAviso" placeholder="Aviso (opcional)" style="height:88px" oninput="updateMsgPreview()"></textarea>
+            <textarea class="inp-txt custom-msg-input" id="txtReco" placeholder="Recomendación (opcional)" style="height:88px" oninput="updateMsgPreview()"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="wizard-actions">
+        <button class="btn btn-back" type="button" onclick="wizardGo(1)">← Volver</button>
+        <button class="btn btn-next" type="button" onclick="wizardGo(3)">Siguiente: confirmar envío →</button>
+      </div>
+    </div>
+
+    <!-- Panel 3: Confirmar -->
+    <div class="wizard-panel" id="wpanel3">
+      <div class="wpanel-section">
+        <div class="wbox-title">📊 Resumen del envío</div>
+        <div class="two-col" style="gap:10px">
+          <div class="sum-card"><div class="sum-lbl">Destinatarios</div><div class="sum-num" id="w3DestCount">0 jefes</div><div class="sum-sub" id="w3DestNames">—</div></div>
+          <div class="sum-card"><div class="sum-lbl">Plantilla seleccionada</div><div class="sum-tpl" id="w3TplName">Recordatorio estándar</div><div class="sum-sub" id="w3MsgSnippet">—</div></div>
+        </div>
+      </div>
+      <div class="confirm-guard" id="confirmGuard">
+        <span style="font-size:20px">⚠️</span>
+        <div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
+            <input type="checkbox" id="chkConfirmSend" onchange="wizardEvalSendBtn()"/>
+            Confirmo que revisé los destinatarios y el mensaje. Estoy listo para enviar.
+          </label>
+          <div style="margin-top:4px;font-size:12px;color:#92400e">Esta acción enviará notificaciones reales a los jefes seleccionados.</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <span class="pill-idle" id="massStatusPill">⏳ Listo para enviar</span>
+        <span class="muted" id="massQueueState" style="font-size:12px">Sin mensajes en espera.</span>
+      </div>
+      <div class="wizard-actions">
+        <button class="btn btn-back" type="button" onclick="wizardGo(2)">← Volver</button>
+        <button class="btn btn-send" id="btnAllSend" type="button" disabled onclick="wizardLanzar()">🚀 Enviar a <span id="w3BtnCount">0</span> jefes</button>
+        <button class="btn" id="btnCheckQueue" type="button">🔍 Ver cola</button>
+        <button class="btn" id="btnCancelQueue" type="button" style="color:#9f1239;border-color:#fecaca">✕ Cancelar pendiente</button>
+      </div>
+      <div id="massGuardHint" style="font-size:12px;color:#64748b;margin-top:6px"></div>
+    </div>
+
+    <!-- Controles ocultos -->
+    <button id="btnArmMass" style="display:none"></button>
+    <button id="btnToggleAdv" style="display:none"></button>
+    <div id="advPanel" style="display:none"></div>
+    <div id="uiStatus" class="ui-status hidden"></div>
+  </section>
+
+  <!-- Envío individual eliminado -->
+
+</main>
+
+<!-- ===== MODALES ===== -->
+<!-- Modal KPI detalle -->
+<div id="kpiModal" class="modal-bg hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h4 id="kpiModalTitle">Detalle KPI</h4>
+      <button class="btn" id="btnCloseKpiModal">Cerrar</button>
+    </div>
+    <div class="modal-body">
+      <div class="tbl-wrap"><table><thead><tr><th>Matrícula</th><th>Nombre</th><th>Gerencia</th><th>Área</th><th>Puesto</th><th>HRBP</th><th>Gozado</th><th>Saldo</th><th>Estado</th></tr></thead><tbody id="tbKpiModal"></tbody></table></div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Preview -->
+<div id="prevModal" class="modal-bg hidden">
+  <div class="modal-card modal-wide">
+    <div class="modal-head">
+      <h4 id="previewModalTitle">Previsualización multicanal</h4>
+      <button class="btn" id="btnClosePreviewModal">Cerrar</button>
+    </div>
+    <div class="modal-body">
+      <div class="mail-shell">
+        <div class="mail-head">
+          <div><b>Asunto:</b> <span id="previewSubj">-</span></div>
+          <div><b>De:</b> People Analytics USIL &lt;jlopezp@usil.edu.pe&gt;</div>
+          <div><b>Para:</b> <span id="previewTo">-</span></div>
+          <div id="previewMeta"></div>
+        </div>
+        <iframe id="previewFrame" class="preview-frame" style="width:100%;height:65vh;border:none"></iframe>
+      </div>
+      <div style="margin-top:10px">
+        <div class="mini-lbl" style="margin-bottom:4px">Vista Teams</div>
+        <pre id="previewTeams" style="font-size:12px;max-height:120px;overflow:auto;background:#f8fbff;border:1px solid #d2deea;border-radius:8px;padding:8px">Sin previsualización.</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Cloud Config -->
+<div id="cfgModal" class="modal-bg hidden">
+  <div class="modal-card" style="width:min(560px,92vw)">
+    <div class="modal-head">
+      <h4>☁️ Configuración de Carpeta Nube</h4>
+      <button class="btn" id="btnCloseCfg">Cerrar</button>
+    </div>
+    <div class="modal-body" style="padding:20px">
+      <p class="muted">Define la ruta local de la carpeta compartida en OneDrive/SharePoint. Esa misma carpeta se usará como cola común y también guardará el histórico de maestra y objetivos por año/trimestre.</p>
+      <label class="cfg-label" for="cfgDir">Ruta absoluta o carpeta compartida</label>
+      <div class="cfg-input-row">
+        <input class="inp-txt cfg-input" id="cfgDir" placeholder="C:\Users\...\OneDrive\alertas_cola" autocomplete="off" spellcheck="false"/>
+        <button class="btn" id="btnPickCfgDir" type="button">Seleccionar carpeta</button>
+      </div>
+      <div class="cfg-current-box">
+        <div class="cfg-current-label">Carpeta actual</div>
+        <div id="cfgCurrentDir" class="cfg-current-path">Cargando...</div>
+        <a id="cfgOpenLink" class="cfg-open-link disabled" href="#" target="_blank" rel="noreferrer">Abrir carpeta actual</a>
+      </div>
+      <div id="cfgStatus" class="cfg-status">Cargando...</div>
+      <button class="btn btn-brand" id="btnSaveCfg" style="width:100%">Guardar Configuración</button>
+    </div>
+  </div>
+</div>
+
+<!-- FABs -->
+<button id="fabSend" class="fab fab-send hidden" title="Enviar ahora">⚡ Enviar ahora</button>
+<button id="fabCancel" class="fab fab-cancel hidden" title="Cancelar pendiente">✕ Cancelar envío</button>
+
+<!-- Toasts -->
+<div id="toastStack" class="toast-stack" aria-live="polite"></div>
+
+<!-- ===== MODAL: ACTUALIZAR VACACIONES (PIPELINE) ===== -->
+<div id="pipeModal" class="modal-bg hidden">
+  <div class="pipe-card">
+    <div class="pipe-head">
+      <div>
+        <h3 class="pipe-title">🔄 Actualizar Sistema de Vacaciones</h3>
+        <div class="pipe-sub">Toma el último <b>VACRptMotivo</b> de Descargas y actualiza la base + tablas dinámicas. El archivo original no se toca; se publica una copia y los KPIs se refrescan aquí.</div>
+      </div>
+      <button class="btn" id="pipeClose">Cerrar</button>
+    </div>
+
+    <div class="pipe-entradas">
+      <div class="pipe-ent">
+        <span class="pipe-ent-num">1</span>
+        <div class="pipe-ent-body">
+          <div class="pipe-ent-title">Desde Adryan</div>
+          <div class="pipe-ent-sub">El bot entra a Adryan, descarga el reporte y lo procesa, todo solo. O procesa el último que ya tengas en Descargas.</div>
+          <div class="pipe-fechas" style="display:flex;align-items:center;gap:10px;margin:8px 0 6px;flex-wrap:wrap">
+            <label style="font-size:12px;font-weight:600;color:#3b5068">Fecha inicio:</label>
+            <input type="date" id="pipeFechaInicio" class="inp-txt" style="width:150px;font-size:13px"/>
+            <label style="font-size:12px;font-weight:600;color:#3b5068">Fecha término:</label>
+            <input type="date" id="pipeFechaTermino" class="inp-txt" style="width:150px;font-size:13px"/>
+            <span style="font-size:11px;color:#7a8a99" id="pipeFechasHint">Rango de fechas para el reporte de Adryan</span>
+          </div>
+          <div class="pipe-ent-row">
+            <button class="btn pipe-run" id="pipeRunAdryan" style="background:#1f9d55;color:#fff;border-color:#1f9d55;font-weight:700">⤓ Descargar de Adryan y actualizar</button>
+            <button class="btn pipe-run" id="pipeRun">▶ Procesar último de Descargas</button>
+            <a class="btn pipe-adryan" id="pipeAdryan" target="_blank" rel="noopener">🔗 Ir a Adryan</a>
+          </div>
+        </div>
+      </div>
+      <div class="pipe-ent">
+        <span class="pipe-ent-num" style="background:#e08a1e">2</span>
+        <div class="pipe-ent-body">
+          <div class="pipe-ent-title">Actualizar Maestro del Personal</div>
+          <div class="pipe-ent-sub">El bot entra a Adryan, descarga el último Maestro del Personal, lo sanitiza y lo incorpora al sistema de cruce.</div>
+          <div class="pipe-ent-row">
+            <button class="btn pipe-run" id="pipeRunMaestro" style="background:#e08a1e;color:#fff;border-color:#e08a1e;font-weight:700">👥 Descargar Maestro de Adryan</button>
+          </div>
+        </div>
+      </div>
+      <div class="pipe-ent" style="grid-column: 1 / -1">
+        <span class="pipe-ent-num" style="background:#0f6ea5">3</span>
+        <div class="pipe-ent-body">
+          <div class="pipe-ent-title">Refrescar Resultados</div>
+          <div class="pipe-ent-sub">Haz clic aquí para aplicar los cambios del maestro y las vacaciones a tu dashboard.</div>
+          <div class="pipe-ent-row">
+            <button class="btn pipe-run" id="pipeForceReloadLarge" type="button" onclick="location.reload()" style="background:#0f6ea5;color:#fff;border-color:#0f6ea5;font-weight:700;font-size:16px;padding:12px 20px;width:100%">🔄 Refrescar página y actualizar todo</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pipe-kpis">
+      <div class="pipe-kpi">
+        <div class="pipe-kpi-label">AVANCE DE META</div>
+        <div class="pipe-kpi-num"><span id="pipeAvance">—</span><span class="pipe-kpi-delta" id="pipeAvanceDelta"></span></div>
+        <div class="pipe-meter"><div class="pipe-meter-fill" id="pipeAvanceBar"></div></div>
+      </div>
+      <div class="pipe-kpi">
+        <div class="pipe-kpi-label">DÍAS REGISTRADOS</div>
+        <div class="pipe-kpi-num"><span id="pipeReg">—</span><span class="pipe-kpi-delta" id="pipeRegDelta"></span></div>
+        <div class="pipe-kpi-foot">de <span id="pipeMeta">—</span> días meta</div>
+      </div>
+    </div>
+
+    <div class="pipe-progress-wrap">
+      <div class="pipe-step" id="pipeStep">Listo para actualizar.</div>
+      <div class="pipe-bar"><div class="pipe-bar-fill" id="pipeBar"></div></div>
+      <div class="pipe-pct" id="pipePct">0%</div>
+    </div>
+
+    <details class="pipe-logwrap">
+      <summary>Ver detalle del proceso</summary>
+      <pre class="pipe-log" id="pipeLog"></pre>
+    </details>
+
+    <div class="pipe-actions">
+      <button class="btn hidden" id="pipeReload">Ver dashboard actualizado</button>
+      <button class="btn hidden" id="pipeResetBtn" style="background:#c0392b;color:#fff;border-color:#c0392b;font-weight:700">🔓 Forzar desbloqueo</button>
+    </div>
+  </div>
+</div>
+
+<style>
+#pipeModal .pipe-card{background:#fff;max-width:680px;width:94%;margin:auto;border-radius:14px;
+  box-shadow:0 18px 60px rgba(0,0,0,.28);padding:20px 22px;font-family:inherit;
+  max-height:calc(100vh - 48px);overflow-y:auto}
+.pipe-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
+.pipe-head .btn{border:1px solid #c5d6e6;background:#ffffff;color:#163555;box-shadow:0 1px 2px rgba(15,46,77,.08)}
+.pipe-head .btn:hover{background:#eef6ff;border-color:#7db2dc;color:#0f5b8c}
+.pipe-title{margin:0 0 4px;font-size:19px;color:#143b5e}
+.pipe-sub{font-size:12.5px;color:#5a6b7b;line-height:1.45;max-width:520px}
+.pipe-kpis{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:6px 0 16px}
+.pipe-kpi{background:#f4f8fb;border:1px solid #e3edf4;border-radius:12px;padding:12px 14px}
+.pipe-kpi-label{font-size:10.5px;letter-spacing:.6px;color:#7a8a99;font-weight:700}
+.pipe-kpi-num{font-size:30px;font-weight:800;color:#0f6ea5;line-height:1.15;display:flex;align-items:baseline;gap:8px}
+.pipe-kpi-delta{font-size:13px;font-weight:700;color:#1f9d55}
+.pipe-kpi-delta.neg{color:#c0392b}
+.pipe-kpi-foot{font-size:11.5px;color:#7a8a99;margin-top:2px}
+.pipe-meter{height:8px;background:#e3edf4;border-radius:6px;margin-top:8px;overflow:hidden}
+.pipe-meter-fill{height:100%;width:0;background:linear-gradient(90deg,#1f9d55,#27c06a);transition:width .9s cubic-bezier(.22,.61,.36,1)}
+.pipe-progress-wrap{margin:8px 0 10px}
+.pipe-step{font-size:13px;color:#143b5e;font-weight:600;margin-bottom:6px;min-height:18px}
+.pipe-bar{height:12px;background:#e9eef3;border-radius:8px;overflow:hidden}
+.pipe-bar-fill{height:100%;width:0;background:linear-gradient(90deg,#0f6ea5,#2aa0d8);transition:width .5s ease}
+.pipe-bar-fill.err{background:linear-gradient(90deg,#c0392b,#e74c3c)}
+.pipe-pct{text-align:right;font-size:12px;color:#5a6b7b;margin-top:4px;font-weight:700}
+.pipe-logwrap{margin:6px 0}
+.pipe-logwrap summary{cursor:pointer;font-size:12px;color:#0f6ea5;font-weight:600}
+.pipe-log{max-height:170px;overflow:auto;background:#0e2233;color:#cfe3f2;font-size:11px;line-height:1.5;
+  padding:10px 12px;border-radius:8px;margin:8px 0 0;white-space:pre-wrap;word-break:break-word}
+.pipe-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+.pipe-run{background:#1f9d55;color:#fff;border-color:#1f9d55;font-weight:700}
+.pipe-run:disabled{opacity:.55;cursor:not-allowed}
+.pipe-entradas{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:6px 0 14px}
+.pipe-ent{display:flex;gap:10px;background:#f4f8fb;border:1px solid #e3edf4;border-radius:12px;padding:12px 14px}
+.pipe-ent-num{flex:none;width:24px;height:24px;border-radius:50%;background:#0f6ea5;color:#fff;font-weight:800;
+  font-size:13px;display:flex;align-items:center;justify-content:center}
+.pipe-ent-title{font-size:14px;font-weight:700;color:#143b5e}
+.pipe-ent-sub{font-size:11.5px;color:#5a6b7b;margin:2px 0 9px;line-height:1.4}
+.pipe-ent-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pipe-adryan{background:#143b5e;color:#fff;border-color:#143b5e;font-weight:700}
+.pipe-filename{font-size:11px;color:#7a8a99;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:620px){.pipe-entradas{grid-template-columns:1fr}}
+#pipeReload{background:#0f6ea5;color:#fff;border-color:#0f6ea5;font-weight:700}
+.pipe-card .hidden{display:none}
+</style>
+
+<!-- ===== MODAL: AVANCE DE META ===== -->
+<div id="detModal" class="modal-bg hidden">
+  <div class="det-card">
+    <div class="pipe-head">
+      <div>
+        <h3 class="pipe-title">📊 Avance de la meta de vacaciones</h3>
+        <div class="pipe-sub">Progreso hacia la meta del trimestre — global y por Business Partner (HRBP).</div>
+      </div>
+      <button class="btn" id="detClose">Cerrar</button>
+    </div>
+
+    <div class="av-global">
+      <div class="av-main">
+        <div class="av-main-top"><span class="av-big" id="avTodo">—</span>
+          <span class="av-big-lbl">avance global<br>(toda la base)</span></div>
+        <div class="av-bar av-bar-lg"><div class="av-bar-fill" id="avTodoBar"></div></div>
+        <div class="av-foot"><b id="avReg">—</b> de <b id="avMeta">—</b> días registrados</div>
+      </div>
+      <div class="av-side">
+        <div class="av-mid" id="avBP">—</div>
+        <div class="av-mid-lbl">cumplimiento BPs<br>(sin colegio)</div>
+      </div>
+    </div>
+
+    <div class="av-bp-toolbar">
+      <div class="av-bp-title" id="avBpTitle">Avance por Business Partner</div>
+      <label class="av-toggle" id="avToggleNuevos" title="Incluir/excluir a César Reyes y Gabriel Chang del listado y del cumplimiento de BPs">
+        <input type="checkbox" id="avToggleNuevosChk" checked>
+        <span>Incluir César Reyes y Gabriel Chang</span>
+      </label>
+    </div>
+    <div id="avBpList" class="av-bp-list"></div>
+  </div>
+</div>
+
+<style>
+.det-card{background:#fff;max-width:760px;width:94%;margin:5vh auto;border-radius:14px;
+  box-shadow:0 18px 60px rgba(0,0,0,.28);padding:18px 22px;max-height:90vh;display:flex;flex-direction:column}
+.av-global{display:flex;gap:16px;align-items:stretch;margin:8px 0 14px}
+.av-main{flex:1;background:#f4f8fb;border:1px solid #e3edf4;border-radius:12px;padding:14px 16px}
+.av-main-top{display:flex;align-items:baseline;gap:12px}
+.av-big{font-size:46px;font-weight:800;color:#1f9d55;line-height:1}
+.av-big-lbl{font-size:12px;color:#5a6b7b;font-weight:600}
+.av-side{width:190px;background:#0f6ea5;color:#fff;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;justify-content:center}
+.av-mid{font-size:34px;font-weight:800;line-height:1}
+.av-mid-lbl{font-size:11px;opacity:.9;margin-top:4px}
+.av-bar{height:12px;background:#e3edf4;border-radius:8px;overflow:hidden}
+.av-bar-lg{height:16px;margin:12px 0 8px}
+.av-bar-fill{height:100%;width:0;background:#1f9d55;transition:width 1s cubic-bezier(.22,.61,.36,1)}
+.av-foot{font-size:12.5px;color:#5a6b7b}
+.av-bp-title{font-size:13px;font-weight:700;color:#143b5e}
+.av-bp-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:6px 0 10px;flex-wrap:wrap}
+.av-toggle{display:flex;align-items:center;gap:6px;font-size:11.5px;color:#5a6b7b;font-weight:600;cursor:pointer;user-select:none}
+.av-toggle input{width:15px;height:15px;cursor:pointer;accent-color:#0f6ea5}
+.av-bp-list{overflow:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px}
+.av-bp{border:1px solid #eef3f7;border-radius:10px;padding:10px 12px}
+.av-bp-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.av-bp-name{font-weight:700;color:#143b5e;font-size:13.5px}
+.av-bp-pct{font-weight:800;font-size:16px}
+.av-bp-foot{font-size:11.5px;color:#7a8a99;margin-top:5px}
+.det-card .hidden{display:none}
+/* --- BP clickable + vista detalle por persona --- */
+.av-bp--click{cursor:pointer;transition:box-shadow .15s,border-color .15s,transform .05s}
+.av-bp--click:hover{border-color:#bcd6e8;box-shadow:0 3px 12px rgba(15,110,165,.14)}
+.av-bp--click:active{transform:translateY(1px)}
+.av-bp-go{color:#0f6ea5;font-weight:800;font-size:15px}
+.av-volver{background:#eef3f7;border:1px solid #dbe6ee;color:#0f6ea5;font-weight:700;
+  border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12.5px;margin-bottom:10px}
+.av-volver:hover{background:#e2edf4}
+.av-det-sum{font-size:12.5px;color:#143b5e;background:#f4f8fb;border:1px solid #e3edf4;
+  border-radius:8px;padding:8px 12px;margin-bottom:12px}
+.av-pers{border:1px solid #eef3f7;border-radius:10px;padding:9px 12px;margin-bottom:10px}
+.av-pers-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.av-pers-name{font-weight:700;color:#143b5e;font-size:13px}
+.av-pers-sub{display:block;font-size:11px;color:#7a8a99;margin-top:2px}
+.av-pers-num{text-align:right;white-space:nowrap}
+.av-reg{width:100%;border-collapse:collapse;margin-top:8px;font-size:11.5px}
+.av-reg th{text-align:left;color:#5a6b7b;font-weight:600;border-bottom:1px solid #eef3f7;padding:3px 6px}
+.av-reg td{padding:3px 6px;border-bottom:1px solid #f4f7fa;color:#34485a}
+.av-reg-none{font-size:11.5px;color:#9aa7b2;margin-top:6px;font-style:italic}
+/* Rango de predicción (conservador – optimista) */
+.kcard-pred-range{display:flex;align-items:center;gap:4px;font-size:11px;justify-content:center;margin-top:2px;flex-wrap:wrap}
+.pred-range-sep{color:#9aa7b2;font-weight:700}
+.pred-range-label{color:#9aa7b2;font-size:10px;margin-left:2px}
+/* Popover de leyenda en wkpi */
+.wkpi-with-info{position:relative}
+.wkpi-info-btn{background:none;border:none;cursor:pointer;color:#0f6ea5;font-size:13px;padding:0 2px;line-height:1;vertical-align:middle;opacity:.7}
+.wkpi-info-btn:hover{opacity:1}
+.wkpi-popover{display:none;position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);
+  background:#fff;border:1px solid #dbe6ee;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.13);
+  padding:12px 14px;width:260px;z-index:9999;text-align:left}
+.wkpi-popover.open{display:block}
+.wkpi-pop-title{font-weight:700;color:#143b5e;font-size:12.5px;margin-bottom:8px}
+.wkpi-pop-list{margin:0 0 8px 0;padding-left:4px;list-style:none}
+.wkpi-pop-list li{font-size:11.5px;color:#34485a;padding:2px 0;line-height:1.4}
+.wkpi-pop-note{font-size:10.5px;color:#7a8a99;border-top:1px solid #eef3f7;padding-top:6px;margin-top:4px;line-height:1.4}
+/* Detalle mejorado de área */
+.av-det-header{background:#f4f8fb;border:1px solid #dbe6ee;border-radius:10px;padding:12px 14px;margin-bottom:14px}
+.av-det-title{margin-bottom:8px}
+.av-det-area-name{font-weight:800;color:#143b5e;font-size:14px;margin-right:8px}
+.av-det-ger{font-size:12px;color:#5a6b7b}
+.av-det-kpis{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px}
+.av-det-kpi{display:flex;flex-direction:column;align-items:center;min-width:60px}
+.av-det-kpi b{font-size:15px;line-height:1.2}
+.av-det-kpi small{font-size:10px;color:#7a8a99;text-transform:uppercase;letter-spacing:.4px}
+.av-det-bar{height:6px;background:#e3edf4;border-radius:4px;overflow:hidden;margin-bottom:4px}
+.av-det-bar-fill{height:100%;border-radius:4px;transition:width .4s}
+.av-det-days{font-size:11.5px;color:#5a6b7b}
+/* Badges de estado */
+.av-badge{display:inline-block;font-size:10px;font-weight:700;border-radius:4px;padding:1px 6px;margin-left:6px;vertical-align:middle}
+.av-badge-ok{background:#d4f0e0;color:#1a7a43}
+.av-badge-yellow{background:#fff0d4;color:#9a5f00}
+.av-badge-red{background:#fce8e8;color:#a02020}
+/* Saldo de días pendientes */
+.av-pers-saldo{display:block;font-size:10.5px;color:#c0392b;font-weight:700;margin-top:2px}
+/* Tabla de registros mejorada */
+.av-reg tr:last-child td{border-bottom:none}
+.av-reg td:first-child,.av-reg th:first-child{border-radius:4px 0 0 4px}
+</style>
+
+<!-- ===== MODAL: RANKING POR UNIDADES DE NEGOCIO ===== -->
+<div id="areaRankModal" class="modal-bg hidden">
+  <div class="det-card" style="max-width:900px">
+    <div class="pipe-head">
+      <div>
+        <h3 class="pipe-title">🏢 Cumplimiento por Unidades de Negocio</h3>
+        <div class="pipe-sub">Ranking de avance vacacional por unidad de negocio, gerencia y área.</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+        <button class="btn" id="areaRankDownloadAll" title="Descargar Excel con todas las áreas" style="background:#1f9d55;color:#fff;border-color:#1f9d55;font-size:12px">⬇ Excel</button>
+        <button class="btn" id="areaRankClose">Cerrar</button>
+      </div>
+    </div>
+    <!-- Filtros desplegables jerárquicos -->
+    <div class="ar-filters" style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;align-items:center">
+      <select id="arFilterUdn" class="inp-sel ar-filter-sel" title="Filtrar por Unidad de Negocio">
+        <option value="">Todas las Unidades de Negocio</option>
+      </select>
+      <select id="arFilterGerencia" class="inp-sel ar-filter-sel" title="Filtrar por Gerencia">
+        <option value="">Todas las Gerencias</option>
+      </select>
+      <select id="arFilterArea" class="inp-sel ar-filter-sel" title="Filtrar por Área">
+        <option value="">Todas las Áreas</option>
+      </select>
+    </div>
+    <!-- Búsqueda + ordenamiento -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px;align-items:center">
+      <input type="text" id="areaRankSearch" placeholder="Buscar unidad, gerencia, área o persona…"
+             style="flex:2;min-width:200px;padding:7px 11px;border:1px solid #cddbe8;border-radius:8px;font-size:13px;outline:none;color:#143b5e">
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#5a6b7b;font-weight:600;cursor:pointer;user-select:none;white-space:nowrap">
+        <input type="checkbox" id="areaRankSortAsc" style="accent-color:#0f6ea5"> Menor a mayor
+      </label>
+    </div>
+    <div id="areaRankResultCount" style="font-size:11px;color:#7a8a99;margin-bottom:6px"></div>
+    <div id="areaRankList" class="av-bp-list" style="max-height:55vh">
+      <div style="padding:14px;color:#888">Cargando…</div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* --- Compact KPI overrides --- */
+.kpis{grid-template-columns:repeat(6,1fr)!important;gap:10px!important}
+.kcard{padding:12px!important;min-height:auto!important}
+.kcard-icon{font-size:18px!important}
+.kcard-label{font-size:10px!important;margin-top:1px!important}
+.kcard-num{font-size:32px!important;margin-top:2px!important}
+.kcard-foot{font-size:11px!important;margin-top:2px!important}
+
+/* --- Yellow card variant --- */
+.kcard--yellow::before{background:#e08a1e}
+
+/* --- Purple card variant --- */
+.kcard--purple::before{background:#8b5cf6}
+
+/* --- Avance card special --- */
+.kcard--avance{grid-template-rows:auto auto auto auto auto auto!important;border:1.5px solid var(--brand)}
+.kcard--avance .kcard-num{font-size:36px!important}
+.kcard-bar{height:7px!important;margin-top:6px!important}
+.kcard-bar-fill{transition:width 1.1s cubic-bezier(.22,.61,.36,1),background .4s!important}
+
+/* --- Color-coded avance bar --- */
+.kcard-bar-fill.bar-red{background:linear-gradient(90deg,#c0392b,#e74c3c)!important}
+.kcard-bar-fill.bar-yellow{background:linear-gradient(90deg,#e08a1e,#f0c040)!important}
+.kcard-bar-fill.bar-green{background:linear-gradient(90deg,#1f9d55,#2ecc71)!important}
+
+/* --- Prediction sub-card inside avance --- */
+.kcard-prediction{display:flex;align-items:center;gap:5px;margin-top:6px;padding:5px 8px;
+  background:rgba(15,110,165,.06);border-radius:6px;border:1px dashed rgba(15,110,165,.18)}
+.kcard-pred-icon{font-size:13px}
+.kcard-pred-label{font-size:10px;color:#5a6b7b;font-weight:600}
+.kcard-pred-val{font-size:15px;font-weight:900;color:#e08a1e}
+
+/* --- Area Ranking toggle button --- */
+.area-ranking-toggle{display:flex;justify-content:flex-end;margin-top:-4px}
+.area-ranking-toggle .btn{padding:7px 16px!important;font-size:12px!important;border-radius:8px!important}
+
+/* --- Area Ranking modal bars --- */
+.area-rank-row{padding:8px 10px;border:1px solid #eef3f7;border-radius:8px;margin-bottom:6px;transition:all .12s}
+.area-rank-row:hover{border-color:#bcd6e8;background:#f8fbff}
+.area-rank-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+.area-rank-name{font-weight:700;color:#143b5e;font-size:12.5px;max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.area-rank-pct{font-weight:800;font-size:14px}
+.area-rank-bar{height:6px;background:#e3edf4;border-radius:4px;overflow:hidden}
+.area-rank-bar-fill{height:100%;border-radius:4px;transition:width .7s cubic-bezier(.22,.61,.36,1)}
+.area-rank-foot{font-size:10.5px;color:#7a8a99;margin-top:3px}
+.ar-dl-btn{background:none;border:1px solid #dbe6ee;border-radius:5px;padding:2px 7px;cursor:pointer;font-size:12px;color:#1f9d55;line-height:1.4}
+.ar-dl-btn:hover{background:#ecfdf5;border-color:#1f9d55}
+.ar-breadcrumb{font-size:12px;color:#5a6b7b;margin-bottom:6px;display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.ar-bc-link{color:#0f6ea5;cursor:pointer;font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.ar-bc-link:hover{color:#0c4a6e}
+/* --- Filter dropdown selects --- */
+.ar-filter-sel{flex:1;min-width:180px;padding:7px 10px;border:1px solid #cddbe8;border-radius:8px;font-size:12.5px;
+  color:#143b5e;background:#fff;outline:none;cursor:pointer;transition:border-color .15s}
+.ar-filter-sel:hover,.ar-filter-sel:focus{border-color:#0f6ea5}
+/* --- Gerencia sub-level row --- */
+.area-rank-row--ger{border-left:3px solid #0f6ea5;padding-left:14px}
+.area-rank-row--area{border-left:3px solid #e08a1e;padding-left:14px}
+</style>
+
+<script src="assets/js/app_completo.js?v=20260626-kpi-dias"></script>
+<script src="assets/js/pipeline_vac.js?v=20260626-embudo-v3"></script>
+<script>
+// Popover interactivo del botón ⓘ en "Personas objetivo"
+(function () {
+  function initInfoBtn() {
+    var btn = document.getElementById('sumLeadersInfoBtn');
+    var pop = document.getElementById('sumLeadersPopover');
+    if (!btn || !pop) return;
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      pop.classList.toggle('open');
+    });
+    document.addEventListener('click', function (e) {
+      if (!pop.contains(e.target) && e.target !== btn) pop.classList.remove('open');
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initInfoBtn);
+  } else {
+    initInfoBtn();
+  }
+})();
+</script>
+</body>
+</html>
