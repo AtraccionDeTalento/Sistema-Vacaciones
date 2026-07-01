@@ -7,6 +7,15 @@ set PORT=5002
 set PYW=%ROOT%.venv\Scripts\pythonw.exe
 set SRV=%ROOT%servidor.py
 
+:: Crear/actualizar acceso directo en el Escritorio para procesar la cola manualmente
+powershell -NoProfile -Command ^
+  "$s=(New-Object -COM WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Enviar Cola Vacaciones.lnk');" ^
+  "$s.TargetPath='%ROOT%ENVIAR_COLA_OUTLOOK.bat';" ^
+  "$s.WorkingDirectory='%ROOT%';" ^
+  "$s.Description='Enviar correos de alertas pendientes via Outlook';" ^
+  "$s.IconLocation='%SystemRoot%\System32\SHELL32.dll,13';" ^
+  "$s.Save()" 2>nul
+
 powershell -NoProfile -Command "if ((Test-NetConnection -ComputerName 127.0.0.1 -Port %PORT% -WarningAction SilentlyContinue).TcpTestSucceeded) { Start-Process 'http://127.0.0.1:%PORT%'; exit 0 } else { exit 1 }"
 if not errorlevel 1 exit /b 0
 
