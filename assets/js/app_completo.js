@@ -513,7 +513,7 @@ async function toggleModoEnvio() {
     const d = await jfetch('/api/tester-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: nuevoEmail })
+      body: JSON.stringify({ email_tester: nuevoEmail })
     });
     _modoEnvioTestEmail = d.email_tester || '';
     _actualizarBtnModo();

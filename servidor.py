@@ -371,7 +371,7 @@ _MAESTRO_FULL_PATH = next(iter(sorted(
 
 
 
-_TEST_EMAIL_DESTINO = 'jlopezp@usil.edu.pe'
+_TEST_EMAIL_DESTINO = _PA_CONFIG.get('vacaciones_test_email', '')
 
 
 
@@ -1510,8 +1510,6 @@ def _resolver_test_email_destino():
         _PA_CONFIG.get('vacaciones_test_email', '')
 
         or _TEST_EMAIL_DESTINO
-
-        or _resolver_default_email()
 
         or ''
 
@@ -6192,7 +6190,7 @@ def api_tester_config():
 
             'ok': True,
 
-            'email_tester': _resolver_test_email_destino(),
+            'email_tester': _PA_CONFIG.get('vacaciones_test_email', ''),
 
             'email_default': _resolver_default_email(),
 
@@ -6202,9 +6200,9 @@ def api_tester_config():
 
     payload = request.get_json(silent=True) or {}
 
-    email = _norm_email(payload.get('email_tester', ''))
+    email = _norm_email(payload.get('email_tester', payload.get('email', '')))
 
-    if not email or '@' not in email:
+    if email and '@' not in email:
 
         return jsonify({'ok': False, 'error': 'Correo tester invalido'}), 400
 
