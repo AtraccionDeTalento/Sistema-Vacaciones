@@ -7936,6 +7936,23 @@ def _resolver_default_email():
 
 
 
+def _resolver_email_supervisor_maestro(nombre):
+    """Busca el email de un supervisor en la tabla maestra por nombre.
+    Normaliza comas y acentos para cruzar 'VERA, NANCY' (vacaciones) con 'VERA NANCY' (maestro)."""
+    if not nombre:
+        return ''
+    _, mat_a_info, _ = _cargar_tabla_maestra_jefes()
+    if not mat_a_info:
+        return ''
+    target_key = _nombre_cmp_key(nombre)
+    for info in mat_a_info.values():
+        nom = info.get('nombre', '')
+        if nom and _nombre_cmp_key(nom) == target_key:
+            return _norm_email(info.get('email', ''))
+    return ''
+
+
+
 
 
 def _nombre_supervisor_canonico(nombre_raw):
@@ -8597,6 +8614,12 @@ def _resolver_supervisor_identidad(nombre_raw='', matricula_raw='', idx=None):
 
         data = idx.get('by_mat', {}).get(_norm_id(nombre_raw))
 
+    # Lookup normalizado: elimina comas y espacios extra para cruzar
+    # "SUAREZ VERA, NANCY" (vacaciones) con "SUAREZ VERA NANCY" (maestro)
+    if data is None and nombre_norm:
+
+        data = idx.get('by_name', {}).get(_nombre_cmp_key(nombre_raw))
+
 
 
     if data:
@@ -9054,6 +9077,29 @@ def _agrupar_por_supervisor(ret, prox, sin_cumplir, df_pm):
     Siempre garantiza al menos una entrada aunque no haya emails en el Excel."""
 
     idx = _build_personal_index(df_pm)
+
+    # Enriquecer el índice con emails del maestro:
+    # el dataframe de vacaciones no tiene columnas de correo, así que sin este paso
+    # todos los emails quedan vacíos y se cae en el fallback (jlopezp).
+    _, mat_a_info_mae, _ = _cargar_tabla_maestra_jefes()
+    if mat_a_info_mae:
+        for _mat, _info in mat_a_info_mae.items():
+            _em = _info.get('email', '')
+            _nom = _info.get('nombre', '')
+            _entry = {'nombre': _nom, 'email': _em, 'matricula': _mat}
+            if _mat:
+                existing = idx['by_mat'].get(_mat)
+                if not existing:
+                    idx['by_mat'][_mat] = _entry
+                elif not existing.get('email') and _em:
+                    existing['email'] = _em
+            if _nom:
+                for _key in (_nom.upper(), _norm(_nom).upper()):
+                    existing = idx['by_name'].get(_key)
+                    if not existing:
+                        idx['by_name'][_key] = _entry
+                    elif not existing.get('email') and _em:
+                        existing['email'] = _em
 
     default  = _resolver_default_email()
 
@@ -12167,7 +12213,8 @@ def _armar_contenido_supervisor(nombre, email='', dias=30, plantilla_override=No
 
     )
 
-    email_destino_real = _norm_email(email) or cfg.get('email', '') or _resolver_default_email()
+    email_destino_real = (_norm_email(email) or cfg.get('email', '') or
+                         _resolver_email_supervisor_maestro(nombre) or _resolver_default_email())
 
     # Si hay vacaciones_test_email configurado globalmente, SIEMPRE redirigir (modo prueba global)
 
