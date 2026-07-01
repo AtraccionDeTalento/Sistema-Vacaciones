@@ -94,13 +94,49 @@
       <div>
         <h2 class="panel-h" style="margin-bottom:2px">📨 Envío de Mensajes a Jefaturas</h2>
         <p class="muted">Notifica a los líderes de Talento y Cultura sobre el estado vacacional de su equipo. Sigue los 3 pasos.</p>
-        <div style="margin-top:5px;display:flex;align-items:center;gap:7px">
+        <div style="margin-top:5px;display:flex;align-items:center;gap:7px;flex-wrap:wrap">
           <button id="btnModoEnvio" onclick="toggleModoEnvio()"
             title="Haz clic para cambiar el modo de envío de correos"
             style="font-size:10px;padding:2px 9px;border-radius:99px;border:1.5px solid #d97706;background:#fef3c7;color:#92400e;cursor:pointer;font-weight:600;line-height:1.6;transition:all .15s">
             🔒 Prueba
           </button>
           <span id="lblModoEnvio" style="font-size:10px;color:#94a3b8"></span>
+          <button id="btnSmtpStatus" onclick="abrirModalSmtp()"
+            title="Estado del correo SMTP — haz clic para configurar"
+            style="font-size:10px;padding:2px 9px;border-radius:99px;border:1.5px solid #94a3b8;background:#f1f5f9;color:#64748b;cursor:pointer;font-weight:600;line-height:1.6;transition:all .15s">
+            📧 SMTP ···
+          </button>
+        </div>
+
+        <!-- Modal configuración SMTP -->
+        <div id="modalSmtp" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center">
+          <div style="background:#fff;border-radius:12px;padding:28px 32px;width:min(460px,90vw);box-shadow:0 8px 32px rgba(0,0,0,.18);position:relative">
+            <button onclick="cerrarModalSmtp()" style="position:absolute;top:12px;right:14px;background:none;border:none;font-size:18px;cursor:pointer;color:#94a3b8">✕</button>
+            <h3 style="margin:0 0 4px;font-size:15px;font-weight:700">📧 Configuración SMTP</h3>
+            <p style="margin:0 0 18px;font-size:12px;color:#64748b">Los correos se envían vía <b>Office 365</b> usando contraseña de aplicación.<br>
+              Si el SMTP falla: ve a <a href="https://aka.ms/mysecurityinfo" target="_blank" style="color:#0f6ea5">aka.ms/mysecurityinfo</a> → <b>Contraseñas de aplicación</b> → Nueva.</p>
+            <div id="smtpStatusBanner" style="display:none;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:14px;font-weight:600"></div>
+            <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:4px">Cuenta</label>
+            <input id="inpSmtpEmail" type="email" placeholder="jlopezp@usil.edu.pe"
+              style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid #d1d5db;border-radius:6px;font-size:13px;margin-bottom:12px">
+            <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:4px">Contraseña de aplicación (App Password)</label>
+            <input id="inpSmtpPass" type="password" placeholder="Pega la nueva contraseña de app aquí"
+              style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid #d1d5db;border-radius:6px;font-size:13px;margin-bottom:16px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button onclick="testSmtpSolo()" id="btnTestSmtp"
+                style="padding:7px 16px;border-radius:6px;border:1.5px solid #0f6ea5;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:600;cursor:pointer">
+                🔍 Solo probar
+              </button>
+              <button onclick="guardarYTestSmtp()" id="btnGuardarSmtp"
+                style="padding:7px 16px;border-radius:6px;border:none;background:#0f6ea5;color:#fff;font-size:12px;font-weight:600;cursor:pointer">
+                💾 Guardar y probar
+              </button>
+              <button onclick="enviarColaSmtp()" id="btnEnviarColaSmtp"
+                style="padding:7px 16px;border-radius:6px;border:1.5px solid #059669;background:#f0fdf4;color:#065f46;font-size:12px;font-weight:600;cursor:pointer">
+                🚀 Enviar cola ahora
+              </button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="wkpis">

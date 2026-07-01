@@ -528,6 +528,118 @@ async function toggleModoEnvio() {
   }
 }
 
+// ─── SMTP config modal ────────────────────────────────────────────────────────
+
+function _smtpBanner(msg, tipo) {
+  const el = document.getElementById('smtpStatusBanner');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = msg;
+  el.style.background = tipo === 'ok' ? '#d1fae5' : tipo === 'err' ? '#fee2e2' : '#fef3c7';
+  el.style.color   = tipo === 'ok' ? '#065f46' : tipo === 'err' ? '#991b1b' : '#92400e';
+  el.style.borderLeft = '4px solid ' + (tipo === 'ok' ? '#059669' : tipo === 'err' ? '#dc2626' : '#d97706');
+}
+
+async function _loadSmtpStatus() {
+  const btn = document.getElementById('btnSmtpStatus');
+  if (!btn) return;
+  try {
+    const d = await jfetch('/api/cola-pa/estado-in');
+    const ok = d.smtp_configurado === true;
+    btn.textContent = ok ? '📧 SMTP ✓' : '📧 SMTP ✗';
+    btn.style.borderColor  = ok ? '#059669' : '#dc2626';
+    btn.style.background   = ok ? '#f0fdf4' : '#fef2f2';
+    btn.style.color        = ok ? '#065f46' : '#991b1b';
+    btn.title = ok ? 'SMTP configurado — haz clic para cambiar credenciales' : 'SMTP no configurado o expirado — haz clic para configurar';
+  } catch {}
+}
+
+async function abrirModalSmtp() {
+  const modal = document.getElementById('modalSmtp');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  document.getElementById('smtpStatusBanner').style.display = 'none';
+  // Pre-cargar email actual
+  try {
+    const d = await jfetch('/api/cola-pa/estado-in');
+    const emailEl = document.getElementById('inpSmtpEmail');
+    if (emailEl && d.smtp_email) emailEl.value = d.smtp_email;
+    if (d.smtp_configurado === false) {
+      _smtpBanner('⚠️ SMTP inactivo — la contraseña de aplicación puede haber expirado.', 'warn');
+    } else if (d.smtp_configurado === true) {
+      _smtpBanner('✅ SMTP funciona correctamente.', 'ok');
+    }
+  } catch {}
+}
+
+function cerrarModalSmtp() {
+  const modal = document.getElementById('modalSmtp');
+  if (modal) modal.style.display = 'none';
+}
+
+async function _callSmtpTest(soloProbar) {
+  const email = document.getElementById('inpSmtpEmail')?.value?.trim();
+  const pass  = document.getElementById('inpSmtpPass')?.value?.trim();
+  if (!email) { _smtpBanner('Ingresa la cuenta de correo.', 'warn'); return; }
+  if (!pass && !soloProbar) { _smtpBanner('Ingresa la nueva contraseña de aplicación.', 'warn'); return; }
+  const btnT = document.getElementById('btnTestSmtp');
+  const btnG = document.getElementById('btnGuardarSmtp');
+  if (btnT) btnT.disabled = true;
+  if (btnG) btnG.disabled = true;
+  _smtpBanner('⏳ Probando conexión…', 'warn');
+  try {
+    const body = { smtp_email: email, solo_prueba: soloProbar };
+    if (pass) body.smtp_password = pass;
+    const d = await jfetch('/api/smtp/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (d.ok) {
+      _smtpBanner('✅ ' + (d.mensaje || 'SMTP funciona correctamente.'), 'ok');
+      if (!soloProbar) notify('Credenciales SMTP guardadas y verificadas.', 'ok');
+    } else {
+      _smtpBanner('❌ ' + (d.error || d.mensaje || 'Error desconocido.'), 'err');
+    }
+    await _loadSmtpStatus();
+  } catch (e) {
+    _smtpBanner('❌ Error: ' + e.message, 'err');
+  } finally {
+    if (btnT) btnT.disabled = false;
+    if (btnG) btnG.disabled = false;
+  }
+}
+
+async function testSmtpSolo()    { await _callSmtpTest(true); }
+async function guardarYTestSmtp(){ await _callSmtpTest(false); }
+
+async function enviarColaSmtp() {
+  const btn = document.getElementById('btnEnviarColaSmtp');
+  if (btn) btn.disabled = true;
+  _smtpBanner('⏳ Enviando cola…', 'warn');
+  try {
+    const d = await jfetch('/api/cola-pa/enviar-smtp-ahora', { method: 'POST' });
+    if (d.ok || d.enviados >= 0) {
+      _smtpBanner(`✅ Enviados: ${d.enviados ?? 0}  Errores: ${d.errores ?? 0}`, 'ok');
+      notify(`Cola procesada — enviados: ${d.enviados ?? 0}`, 'ok');
+    } else {
+      _smtpBanner('❌ ' + (d.error || 'Error al enviar cola.'), 'err');
+    }
+  } catch (e) {
+    _smtpBanner('❌ ' + e.message, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Cerrar modal al hacer clic fuera
+document.addEventListener('click', e => {
+  const modal = document.getElementById('modalSmtp');
+  if (modal && e.target === modal) cerrarModalSmtp();
+});
+
+// ─── fin SMTP modal ───────────────────────────────────────────────────────────
+
 async function cancelarUltimoPendiente() {
   await refreshQueueState();
   if (!state.pendingQueueFile) {
@@ -1721,6 +1833,7 @@ async function boot() {
       console.log(`[DEBUG] Cargando KPIs (intento ${attempt})...`);
       initData = await jfetch('/api/init');
       loadModoEnvio().catch(() => {});
+      _loadSmtpStatus().catch(() => {});
       break;
     } catch (e) {
       console.warn(`[BOOT] /api/init intento ${attempt} falló:`, e.message);
