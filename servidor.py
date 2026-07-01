@@ -896,6 +896,44 @@ def _smtp_procesar_in():
             print(f'[SMTP-FB] Error procesando {nombre}: {e}')
 
 
+def _outlook_procesar_in():
+    """Fallback automático: si un archivo lleva >3 min en in/ sin que PA lo procese,
+    lo enviamos por Outlook COM y lo movemos a procesados/.
+    No requiere SMTP AUTH — usa la sesión de Outlook ya abierta."""
+    import subprocess as _sp
+    ESPERA = 3 * 60
+    ahora = time.time()
+    try:
+        pendientes = [
+            f for f in os.listdir(COLA_IN_DIR)
+            if f.lower().endswith('.json')
+            and os.path.isfile(os.path.join(COLA_IN_DIR, f))
+            and ahora - os.path.getmtime(os.path.join(COLA_IN_DIR, f)) >= ESPERA
+        ]
+    except Exception:
+        return
+    if not pendientes:
+        return
+    print(f'[OUTLOOK-FB] {len(pendientes)} archivo(s) en in/ sin procesar (>3 min) — enviando via Outlook COM...')
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'enviar_cola_outlook.py')
+    if not os.path.isfile(script):
+        print('[OUTLOOK-FB] enviar_cola_outlook.py no encontrado, saltando fallback.')
+        return
+    try:
+        result = _sp.run(
+            [sys.executable, script, '--solo-in'],
+            capture_output=True, text=True, timeout=120, encoding='utf-8', errors='replace'
+        )
+        for linea in (result.stdout or '').splitlines():
+            print(f'[OUTLOOK-FB] {linea}')
+        if result.stderr:
+            print(f'[OUTLOOK-FB][STDERR] {result.stderr[:300]}')
+    except _sp.TimeoutExpired:
+        print('[OUTLOOK-FB] Timeout: Outlook tardó más de 2 min.')
+    except Exception as e:
+        print(f'[OUTLOOK-FB][ERR] {e}')
+
+
 def _cola_pa_loop():
 
     import time
@@ -905,15 +943,15 @@ def _cola_pa_loop():
     while True:
 
         try:
-
             _mover_pendientes_listos()
-
         except Exception as e:
-
             print(f'[COLA-PA][ERR] {e}')
 
-        # Fallback SMTP desactivado: Power Automate es el canal de envio.
-        # Los archivos permanecen en in/ hasta que PA los procese.
+        # Fallback Outlook COM: si PA no procesó el archivo en >3 min, lo enviamos nosotros.
+        try:
+            _outlook_procesar_in()
+        except Exception as e:
+            print(f'[COLA-PA][OUTLOOK-FB][ERR] {e}')
 
         time.sleep(30)
 
@@ -15005,8 +15043,29 @@ if __name__ == '__main__':
     # El servidor HTTP arranca de inmediato; la precarga corre en paralelo.
     # /api/status/ready devuelve {"ready": false} hasta que termine y el front
     # muestra un spinner ligero en lugar de quedar bloqueado 20-40 seg.
+    def _recuperar_errores_al_inicio():
+        """Mueve archivos de errores/ → in/ al arrancar para que el loop los reintente."""
+        err_dir = os.path.join(COLA_DIR, 'errores')
+        if not os.path.isdir(err_dir) or not os.path.isdir(COLA_IN_DIR):
+            return
+        count = 0
+        for nombre in os.listdir(err_dir):
+            if not nombre.lower().endswith('.json'):
+                continue
+            src = os.path.join(err_dir, nombre)
+            dst = os.path.join(COLA_IN_DIR, nombre)
+            if os.path.isfile(src) and not os.path.exists(dst):
+                try:
+                    shutil.move(src, dst)
+                    count += 1
+                except Exception:
+                    pass
+        if count:
+            print(f'[BOOT] {count} archivo(s) recuperados de errores/ → in/ para reintento via Outlook COM')
+
     def _boot_async():
         print('[BOOT] Precargando datos en segundo plano...')
+        _recuperar_errores_al_inicio()
         _pre_cargar_todo_sincrono()
         _warmup_avance_cache()
     threading.Thread(target=_boot_async, daemon=True).start()
