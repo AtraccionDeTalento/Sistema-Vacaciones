@@ -1,18 +1,20 @@
 # -*- coding: utf-8 -*-
 """
 enviar_cola_outlook.py
-Envía todos los correos pendientes en alertas_cola/in/ usando Outlook de escritorio.
+Envía todos los correos pendientes usando Outlook de escritorio.
 No necesita SMTP ni contraseñas — usa la sesión de Outlook que ya tienes abierta.
 
+Procesa in/ (pendientes) y errores/ (reintentos de PA fallidos).
+
 Uso:
-    python enviar_cola_outlook.py            # envia todo lo que haya en in/
+    python enviar_cola_outlook.py            # envia in/ y errores/
     python enviar_cola_outlook.py --dry-run  # muestra qué enviaría sin enviar nada
+    python enviar_cola_outlook.py --solo-in  # solo procesa in/ (sin tocar errores/)
 """
 import os
 import sys
 import json
 import shutil
-import datetime
 
 # Forzar UTF-8 en la consola para evitar errores con emojis/unicode
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
@@ -22,6 +24,7 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
 AQUI        = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(AQUI, 'pa_config.json')
 DRY_RUN     = '--dry-run' in sys.argv
+SOLO_IN     = '--solo-in' in sys.argv
 
 
 def cargar_config():
@@ -39,7 +42,7 @@ def resolver_cola_dir(cfg):
                         'OneDrive - Universidad San Ignacio de Loyola', 'alertas_cola')
     if os.path.isdir(base):
         return base
-    raise FileNotFoundError(f'No se encontró la carpeta alertas_cola. Verifica alertas_cola_dir en pa_config.json')
+    raise FileNotFoundError('No se encontró la carpeta alertas_cola. Verifica alertas_cola_dir en pa_config.json')
 
 
 def enviar_via_outlook(para, nombre, asunto, html_body):
@@ -55,30 +58,22 @@ def enviar_via_outlook(para, nombre, asunto, html_body):
     return True
 
 
-def main():
-    cfg       = cargar_config()
-    cola_dir  = resolver_cola_dir(cfg)
-    in_dir    = os.path.join(cola_dir, 'in')
-    proc_dir  = os.path.join(cola_dir, 'procesados')
-    err_dir   = os.path.join(cola_dir, 'errores')
+def procesar_directorio(src_dir, proc_dir, err_dir, etiqueta=''):
+    """Procesa todos los .json en src_dir. Devuelve (total_ok, total_err)."""
+    if not os.path.isdir(src_dir):
+        return 0, 0
 
-    if not os.path.isdir(in_dir):
-        print(f'[WARN] Carpeta in/ no existe: {in_dir}')
-        return
-
-    os.makedirs(proc_dir, exist_ok=True)
-    os.makedirs(err_dir,  exist_ok=True)
-
-    archivos = [f for f in os.listdir(in_dir) if f.lower().endswith('.json')]
+    archivos = sorted(f for f in os.listdir(src_dir) if f.lower().endswith('.json'))
     if not archivos:
-        print('[OK] No hay archivos pendientes en in/')
-        return
+        print(f'[OK] No hay archivos en {etiqueta or src_dir}')
+        return 0, 0
 
-    print(f'[INFO] {"(DRY-RUN) " if DRY_RUN else ""}Procesando {len(archivos)} archivos...')
     total_ok, total_err = 0, 0
+    prefijo_run = '(DRY-RUN) ' if DRY_RUN else ''
+    print(f'[INFO] {prefijo_run}Procesando {len(archivos)} archivo(s) de {etiqueta}...')
 
-    for nombre_archivo in sorted(archivos):
-        src = os.path.join(in_dir, nombre_archivo)
+    for nombre_archivo in archivos:
+        src = os.path.join(src_dir, nombre_archivo)
         print(f'\n--- {nombre_archivo} ---')
         try:
             with open(src, 'r', encoding='utf-8') as f:
@@ -100,8 +95,8 @@ def main():
                     print('  [SKIP] Sin contenido HTML')
                     continue
 
-                prefijo = '[DRY] ' if DRY_RUN else ''
-                print(f'  {prefijo}Enviando a {para} ({nombre_dest[:40]})')
+                p = '[DRY] ' if DRY_RUN else ''
+                print(f'  {p}Enviando a {para} ({nombre_dest[:40]})')
                 print(f'  Asunto: {asunto[:70]}')
 
                 try:
@@ -114,7 +109,6 @@ def main():
                     total_err += 1
                     print(f'  [ERR] {e}')
 
-            # mover segun resultado real del envio
             destino = proc_dir if err_count == 0 else err_dir
             if not DRY_RUN:
                 shutil.move(src, os.path.join(destino, nombre_archivo))
@@ -122,6 +116,32 @@ def main():
         except Exception as e:
             total_err += 1
             print(f'  [ERR] Error leyendo archivo: {e}')
+
+    return total_ok, total_err
+
+
+def main():
+    cfg       = cargar_config()
+    cola_dir  = resolver_cola_dir(cfg)
+    in_dir    = os.path.join(cola_dir, 'in')
+    proc_dir  = os.path.join(cola_dir, 'procesados')
+    err_dir   = os.path.join(cola_dir, 'errores')
+
+    os.makedirs(proc_dir, exist_ok=True)
+    os.makedirs(err_dir,  exist_ok=True)
+
+    total_ok, total_err = 0, 0
+
+    # Primero procesa in/ (pendientes normales)
+    ok, err = procesar_directorio(in_dir, proc_dir, err_dir, 'in/ (pendientes)')
+    total_ok += ok
+    total_err += err
+
+    # Luego procesa errores/ (reintentos de Power Automate fallidos), salvo --solo-in
+    if not SOLO_IN:
+        ok, err = procesar_directorio(err_dir, proc_dir, err_dir, 'errores/ (reintentos)')
+        total_ok += ok
+        total_err += err
 
     print(f'\n{"="*50}')
     print(f'RESUMEN {"(DRY-RUN) " if DRY_RUN else ""}: {total_ok} enviados, {total_err} errores')

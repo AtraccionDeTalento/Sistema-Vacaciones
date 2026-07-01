@@ -132,8 +132,14 @@
                 💾 Guardar y probar
               </button>
               <button onclick="enviarColaSmtp()" id="btnEnviarColaSmtp"
+                title="Envía in/ y errores/ usando Outlook de escritorio (no requiere SMTP AUTH)"
                 style="padding:7px 16px;border-radius:6px;border:1.5px solid #059669;background:#f0fdf4;color:#065f46;font-size:12px;font-weight:600;cursor:pointer">
-                🚀 Enviar cola ahora
+                🖥️ Enviar via Outlook
+              </button>
+              <button onclick="enviarColaSmtpDirecto()" id="btnEnviarColaSmtpAlt"
+                title="Alternativa SMTP directo (requiere que IT habilite SMTP AUTH)"
+                style="padding:7px 16px;border-radius:6px;border:1.5px solid #94a3b8;background:#f8fafc;color:#475569;font-size:12px;font-weight:600;cursor:pointer">
+                📨 Enviar via SMTP
               </button>
             </div>
           </div>

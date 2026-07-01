@@ -6981,6 +6981,40 @@ def api_cola_enviar_smtp_ahora():
     return jsonify({'ok': True, 'archivos': len(resultados), 'enviados': total_ok, 'errores': total_err, 'detalle': resultados})
 
 
+@app.route('/api/cola-pa/enviar-outlook-ahora', methods=['POST'])
+def api_cola_enviar_outlook_ahora():
+    """Procesa in/ y errores/ via Outlook COM (no requiere SMTP AUTH).
+    Requiere Outlook de escritorio abierto con sesión activa."""
+    import subprocess, re as _re
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'enviar_cola_outlook.py')
+    if not os.path.isfile(script):
+        return jsonify({'ok': False, 'error': 'enviar_cola_outlook.py no encontrado junto a servidor.py'})
+    try:
+        result = subprocess.run(
+            [sys.executable, script],
+            capture_output=True, text=True, timeout=120, encoding='utf-8', errors='replace'
+        )
+        stdout = result.stdout or ''
+        stderr = result.stderr or ''
+        enviados, errores_n = 0, 0
+        for linea in stdout.splitlines():
+            m = _re.search(r'(\d+) enviados?,\s*(\d+) error', linea)
+            if m:
+                enviados, errores_n = int(m.group(1)), int(m.group(2))
+                break
+        ok = enviados > 0 or (result.returncode == 0 and errores_n == 0)
+        return jsonify({
+            'ok': ok,
+            'enviados': enviados,
+            'errores': errores_n,
+            'log': stdout[-3000:],
+            'stderr': stderr[-500:] if stderr else ''
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({'ok': False, 'error': 'Timeout: Outlook tardó más de 2 minutos. ¿Está Outlook abierto?'})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
 
 @app.route('/api/init')
 

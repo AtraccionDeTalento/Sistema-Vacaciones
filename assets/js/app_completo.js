@@ -614,16 +614,40 @@ async function testSmtpSolo()    { await _callSmtpTest(true); }
 async function guardarYTestSmtp(){ await _callSmtpTest(false); }
 
 async function enviarColaSmtp() {
+  // Usa Outlook COM (no necesita SMTP AUTH). Procesa in/ y errores/.
   const btn = document.getElementById('btnEnviarColaSmtp');
   if (btn) btn.disabled = true;
-  _smtpBanner('⏳ Enviando cola…', 'warn');
+  _smtpBanner('⏳ Enviando via Outlook (in/ + errores/)…', 'warn');
+  try {
+    const d = await jfetch('/api/cola-pa/enviar-outlook-ahora', { method: 'POST' });
+    if (d.ok || (d.enviados ?? 0) >= 0) {
+      const msg = `✅ Outlook — Enviados: ${d.enviados ?? 0}  Errores: ${d.errores ?? 0}`;
+      _smtpBanner(msg, (d.errores ?? 0) > 0 ? 'warn' : 'ok');
+      notify(`Cola procesada via Outlook — enviados: ${d.enviados ?? 0}`, 'ok');
+      if (d.log) console.log('[Outlook cola]', d.log);
+    } else {
+      const err = d.error || 'Error al enviar. ¿Está Outlook abierto?';
+      _smtpBanner('❌ ' + err, 'err');
+    }
+  } catch (e) {
+    _smtpBanner('❌ ' + e.message, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function enviarColaSmtpDirecto() {
+  // Alternativa: SMTP directo (requiere SMTP AUTH habilitado)
+  const btn = document.getElementById('btnEnviarColaSmtpAlt');
+  if (btn) btn.disabled = true;
+  _smtpBanner('⏳ Enviando via SMTP…', 'warn');
   try {
     const d = await jfetch('/api/cola-pa/enviar-smtp-ahora', { method: 'POST' });
     if (d.ok || d.enviados >= 0) {
-      _smtpBanner(`✅ Enviados: ${d.enviados ?? 0}  Errores: ${d.errores ?? 0}`, 'ok');
-      notify(`Cola procesada — enviados: ${d.enviados ?? 0}`, 'ok');
+      _smtpBanner(`✅ SMTP — Enviados: ${d.enviados ?? 0}  Errores: ${d.errores ?? 0}`, 'ok');
+      notify(`Cola procesada via SMTP — enviados: ${d.enviados ?? 0}`, 'ok');
     } else {
-      _smtpBanner('❌ ' + (d.error || 'Error al enviar cola.'), 'err');
+      _smtpBanner('❌ ' + (d.error || 'Error SMTP.'), 'err');
     }
   } catch (e) {
     _smtpBanner('❌ ' + e.message, 'err');
