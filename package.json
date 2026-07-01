@@ -1,0 +1,82 @@
+{
+  "name": "sistema-vacaciones-usil",
+  "version": "1.0.0",
+  "description": "Sistema de Vacaciones USIL",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win --dir"
+  },
+  "author": "Atraccion de Talento USIL",
+  "license": "ISC",
+  "dependencies": {
+    "electron-is-dev": "^2.0.0"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "pe.edu.usil.vacaciones",
+    "productName": "Sistema Vacaciones USIL",
+    "directories": {
+      "output": "dist_electron"
+    },
+    "win": {
+      "icon": "icon.png",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "files": [
+      "main.js",
+      "package.json",
+      "icon.png"
+    ],
+    "extraFiles": [
+      {
+        "from": ".",
+        "to": ".",
+        "filter": [
+          "**/*",
+          "!node_modules/**",
+          "!.git/**",
+          "!dist_electron/**",
+          "!.venv/**",
+          "!.claude/**",
+          "!DATA SENSIBLE/**",
+          "!RESPALDOS/**",
+          "!__pycache__/**",
+          "!**/__pycache__/**",
+          "!*.pyc",
+          "!*.pkl",
+          "!*.log",
+          "!*.log.err",
+          "!_build_analisis.py",
+          "!SISTEMA_VACACIONES_USIL.iss",
+          "!ABRIR_COMO_APP.bat",
+          "!ABRIR_SISTEMA_VACACIONES.vbs",
+          "!ACTUALIZAR_Y_ABRIR.bat",
+          "!run_sistema.bat",
+          "!run_servidor_electron.bat",
+          "!CLAUDE.md",
+          "!GUIA_INSTALACION.md",
+          "!docs/**",
+          "!package-lock.json",
+          "!.gitignore",
+          "!static/**",
+          "!PIPELINE/SALIDAS/**",
+          "!PIPELINE/SUBIDOS/**",
+          "!PIPELINE/DATOS ACTUALIZADOS/**",
+          "!PIPELINE/bot_adryan/logs/**",
+          "!PIPELINE/RESPALDOS/**",
+          "!PIPELINE/*.xlsx"
+        ]
+      }
+    ]
+  }
+}

@@ -301,7 +301,7 @@ function updateMassGuardHint() {
 function getSelectedMassChannels() {
   return {
     enviar_teams: true,
-    enviar_smtp: false,
+    enviar_smtp: true,   // Activado por defecto — el servidor fuerza modo prueba si vacaciones_test_email está configurado
     encolar_pa: true,
   };
 }
@@ -309,7 +309,7 @@ function getSelectedMassChannels() {
 function getSelectedIndividualChannels() {
   return {
     enviar_teams: true,
-    enviar_smtp: false,
+    enviar_smtp: true,   // Activado por defecto — modo prueba activo via pa_config.json
     encolar_para_pa: true,
   };
 }
@@ -470,6 +470,61 @@ async function enviarTodoAhora() {
       fabSend.style.pointerEvents = 'auto';
       fabSend.style.opacity = '1';
     }
+  }
+}
+
+// ─── Modo Prueba / Modo Real ──────────────────────────────────────────────────
+let _modoEnvioTestEmail = '';
+
+async function loadModoEnvio() {
+  try {
+    const d = await jfetch('/api/tester-config');
+    _modoEnvioTestEmail = d.email_tester || '';
+    _actualizarBtnModo();
+  } catch (e) { /* silencioso si el servidor no responde aún */ }
+}
+
+function _actualizarBtnModo() {
+  const btn = $('btnModoEnvio');
+  const lbl = $('lblModoEnvio');
+  if (!btn) return;
+  const esPrueba = !!_modoEnvioTestEmail;
+  if (esPrueba) {
+    btn.innerHTML = '🔒 Prueba';
+    btn.style.cssText = 'font-size:10px;padding:2px 9px;border-radius:99px;border:1.5px solid #d97706;background:#fef3c7;color:#92400e;cursor:pointer;font-weight:600;line-height:1.6;transition:all .15s';
+    if (lbl) lbl.textContent = `correos van solo a ${_modoEnvioTestEmail}`;
+  } else {
+    btn.innerHTML = '✅ Real';
+    btn.style.cssText = 'font-size:10px;padding:2px 9px;border-radius:99px;border:1.5px solid #16a34a;background:#dcfce7;color:#166534;cursor:pointer;font-weight:600;line-height:1.6;transition:all .15s';
+    if (lbl) lbl.textContent = 'correos van a supervisores reales';
+  }
+}
+
+async function toggleModoEnvio() {
+  const btn = $('btnModoEnvio');
+  if (btn) btn.disabled = true;
+  try {
+    const esPrueba = !!_modoEnvioTestEmail;
+    const nuevoEmail = esPrueba ? '' : 'jlopezp@usil.edu.pe';
+    const confirmMsg = esPrueba
+      ? '¿Activar Modo Real? Los correos irán a los supervisores reales.'
+      : '¿Volver a Modo Prueba? Los correos solo llegarán a ti.';
+    if (!window.confirm(confirmMsg)) return;
+    const d = await jfetch('/api/tester-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: nuevoEmail })
+    });
+    _modoEnvioTestEmail = d.email_tester || '';
+    _actualizarBtnModo();
+    const msg = _modoEnvioTestEmail
+      ? `🔒 Modo Prueba activado — correos solo a ${_modoEnvioTestEmail}`
+      : '✅ Modo Real activado — los correos irán a los supervisores reales';
+    notify(msg, _modoEnvioTestEmail ? 'warn' : 'ok');
+  } catch (e) {
+    notify('No se pudo cambiar el modo: ' + e.message, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1665,6 +1720,7 @@ async function boot() {
       }
       console.log(`[DEBUG] Cargando KPIs (intento ${attempt})...`);
       initData = await jfetch('/api/init');
+      loadModoEnvio().catch(() => {});
       break;
     } catch (e) {
       console.warn(`[BOOT] /api/init intento ${attempt} falló:`, e.message);

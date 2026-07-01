@@ -1,18 +1,42 @@
-# Entornos Virtuales
+# Entornos virtuales Python
 .venv/
 venv/
 env/
 __pycache__/
 *.pyc
+*.pyo
 
-# Datos Sensibles (Excel) y Respaldos
+# Node / Electron
+node_modules/
+dist_electron/
+
+# Datos y Excel (nunca al repo)
+*.xlsx
+*.xls
+*.xlsm
 DATA SENSIBLE/
 DATAS/
+PIPELINE/SALIDAS/
+PIPELINE/SUBIDOS/
+PIPELINE/DATOS ACTUALIZADOS/
+PIPELINE/bot_adryan/logs/
+
+# Respaldos locales
 RESPALDOS/
 
-# Archivos de configuracion y logs locales
-*.log
-*.json
+# Archivos de configuracion y estado local (sensibles o runtime)
+pa_config.json
+confirmaciones_vacaciones.json
+log_envios.json
+PIPELINE/bot_adryan/sesion_adryan.json
+PIPELINE/bot_adryan/config_bot.json
+PIPELINE/bot_adryan/estado_bot.json
+PIPELINE/estado_pipeline.json
 
-# Excepciones (Archivos que si queremos subir aunque sean JSON, si los hay)
-# !package.json
+# Logs
+*.log
+*.log.err
+
+# Cache y temporales
+.claude/
+*.pkl

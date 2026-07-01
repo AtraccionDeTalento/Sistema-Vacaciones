@@ -629,9 +629,11 @@
     gers.sort(function(a,b){ return asc ? a.avance-b.avance : b.avance-a.avance; });
     var rc = $('areaRankResultCount');
     if (rc) rc.textContent = gers.length + ' gerencias' + (fUdn ? ' en ' + fUdn : '') + (q ? ' (filtradas)' : '');
-    if (!gers.length){ list.innerHTML='<div style="padding:14px;color:#888">Sin gerencias.</div>'; return; }
     
-    list.innerHTML = gers.map(function(g,i){
+    var btnVolver = '<button class="av-volver" style="margin-bottom:12px; font-weight:600; display:block" onclick="document.getElementById(\'arFilterUdn\').value=\'\'; document.getElementById(\'arFilterUdn\').dispatchEvent(new Event(\'change\'))">⬅ Volver a Todas las Unidades</button>';
+    if (!gers.length){ list.innerHTML = btnVolver + '<div style="padding:14px;color:#888">Sin gerencias.</div>'; return; }
+    
+    list.innerHTML = btnVolver + gers.map(function(g,i){
       var c=color(g.avance), w=Math.min(100,(g.avance||0)*100);
       var nAreas = Object.keys(g.areas).length;
       return '<div class="area-rank-row area-rank-row--ger av-bp--click" data-lvl="gerencia" data-udn="'+esc(g.udn)+'" data-val="'+esc(g.nombre)+'">' +
@@ -670,9 +672,11 @@
     areas.sort(function(a,b){ return asc ? a.avance-b.avance : b.avance-a.avance; });
     var rc = $('areaRankResultCount');
     if (rc) rc.textContent = areas.length + ' áreas' + (fGer ? ' en ' + fGer : '') + (q ? ' (filtradas)' : '');
-    if (!areas.length){ list.innerHTML='<div style="padding:14px;color:#888">Sin áreas.</div>'; return; }
     
-    list.innerHTML = areas.map(function(a,i){
+    var btnVolver = '<button class="av-volver" style="margin-bottom:12px; font-weight:600; display:block" onclick="document.getElementById(\'arFilterGerencia\').value=\'\'; document.getElementById(\'arFilterGerencia\').dispatchEvent(new Event(\'change\'))">⬅ Volver a ' + esc(fUdn) + '</button>';
+    if (!areas.length){ list.innerHTML = btnVolver + '<div style="padding:14px;color:#888">Sin áreas.</div>'; return; }
+    
+    list.innerHTML = btnVolver + areas.map(function(a,i){
       var c=color(a.avance), w=Math.min(100,(a.avance||0)*100);
       var lbl = a.sinArea ? '<em style="color:#9aa7b2">'+esc(a.nombre)+'</em>' : esc(a.nombre);
       return '<div class="area-rank-row area-rank-row--area av-bp--click" data-lvl="area" data-udn="'+esc(a.udn)+'" data-ger="'+esc(a.ger)+'" data-val="'+esc(a.nombre)+'">' +
@@ -717,8 +721,11 @@
 
     var title = fArea || fGer || fUdn || 'Todas las personas';
     var subTitle = fArea ? fGer : (fGer ? fUdn : '');
+    var textoVolver = fArea ? fGer : (fGer ? fUdn : 'Todas las Unidades');
+    var btnVolver = '<button class="av-volver" style="margin-bottom:12px; font-weight:600; display:block" onclick="document.getElementById(\'arFilterArea\').value=\'\'; document.getElementById(\'arFilterArea\').dispatchEvent(new Event(\'change\'))">⬅ Volver a ' + esc(textoVolver) + '</button>';
 
     var html = '<div class="av-det-header">' +
+      btnVolver +
       '<div class="av-det-title"><span class="av-det-area-name">'+esc(title)+'</span><span class="av-det-ger">'+esc(subTitle)+'</span></div>' +
       '<div class="av-det-kpis">' +
         '<span class="av-det-kpi"><b style="color:'+c0+'">'+fpct(avgAvance)+'</b><small>avance</small></span>' +
@@ -753,6 +760,7 @@
         '<div class="av-pers-num"><span style="color:'+c+';font-weight:800;font-size:1.1em">'+fpct(p.avance)+'</span>'+
         '<span class="av-pers-sub">'+fnum(p.gozado)+' goz. / '+fnum(p.meta)+' meta</span>'+
         (saldo>0?'<span class="av-pers-saldo">Saldo: '+fnum(saldo)+' d.</span>':'')+
+        '<button style="margin-top:8px; padding:4px 8px; font-size:12px; cursor:pointer; background:#f0f9ff; color:#0369a1; border:1px solid #bae6fd; border-radius:4px; font-weight:bold" onclick="window.seleccionarColaboradorAlerta(\''+esc(p.nombre)+'\')">📩 Enviar Alerta Individual</button>' +
         '</div></div>'+det+'</div>';
     }).join('');
 
@@ -826,3 +834,36 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
   else wire();
 })();
+
+window.seleccionarColaboradorAlerta = function(nombre) {
+    var modal = document.getElementById('areaRankModal');
+    if (modal) modal.classList.add('hidden'); 
+    
+    if (typeof wizardGo === 'function') {
+        wizardGo(2); // Asumiendo que el paso de seleccionar destino es el 1 o 2.
+    }
+    
+    // Tratamos de buscar la pestaña o modal de colab_buscar (Panel Individual)
+    var btnIndividual = document.getElementById('btnTipoInd');
+    if (btnIndividual) {
+        btnIndividual.click();
+    }
+    
+    var inpColab = document.getElementById('colab_buscar');
+    if (inpColab) {
+        inpColab.value = nombre;
+        var btnColab = document.getElementById('btnColab_Buscar');
+        if (btnColab) btnColab.click();
+    }
+    
+    // Fallback: si hay un general de inpNombre
+    var inpInd = document.getElementById('inpNombre');
+    if (inpInd) {
+        inpInd.value = nombre;
+        inpInd.dispatchEvent(new Event('change'));
+        inpInd.dispatchEvent(new Event('input'));
+    }
+    
+    console.log("Seleccionado colaborador: " + nombre);
+};
+

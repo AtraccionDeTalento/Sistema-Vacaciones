@@ -77,9 +77,18 @@ app = Flask(__name__, static_folder='.', static_url_path='')
 
 SCRIPT_DIR      = os.path.dirname(os.path.abspath(__file__))
 
-DATAS_DIR       = os.path.join(SCRIPT_DIR, 'DATAS')
+def _buscar_directorio(nombre_dir):
+    d = SCRIPT_DIR
+    for _ in range(4):
+        p = os.path.join(d, nombre_dir)
+        if os.path.isdir(p):
+            return p
+        d = os.path.dirname(d)
+    return os.path.join(SCRIPT_DIR, nombre_dir)
 
-DATA_SENSIBLE_DIR = os.path.join(SCRIPT_DIR, 'DATA SENSIBLE')
+DATAS_DIR       = _buscar_directorio('DATAS')
+
+DATA_SENSIBLE_DIR = _buscar_directorio('DATA SENSIBLE')
 
 COLAB_EDIT_FILE = os.path.join(DATAS_DIR, 'colaboradores_overrides.json')
 
@@ -434,9 +443,9 @@ def _resolver_cola_dir():
 
     candidatos = [
 
-        os.path.join(base_od, 'Documents', 'alertas_cola'),
-
         os.path.join(base_od, 'alertas_cola'),
+
+        os.path.join(base_od, 'Documents', 'alertas_cola'),
 
     ]
 
@@ -477,17 +486,40 @@ def _aplicar_rutas_cola(base_dir):
     COLA_FUENTES_MAESTRA_DIR = os.path.join(COLA_FUENTES_DIR, 'maestra')
     COLA_FUENTES_OBJETIVOS_DIR = os.path.join(COLA_FUENTES_DIR, 'objetivos')
 
-    for path in (
-        COLA_DIR,
-        COLA_IN_DIR,
-        COLA_PROCESANDO_DIR,
-        COLA_ARCHIVADOS_DIR,
-        COLA_PENDIENTES_DIR,
-        COLA_CANCELADOS_DIR,
-        COLA_FUENTES_MAESTRA_DIR,
-        COLA_FUENTES_OBJETIVOS_DIR,
-    ):
-        os.makedirs(path, exist_ok=True)
+    try:
+        for path in (
+            COLA_DIR,
+            COLA_IN_DIR,
+            COLA_PROCESANDO_DIR,
+            COLA_ARCHIVADOS_DIR,
+            COLA_PENDIENTES_DIR,
+            COLA_CANCELADOS_DIR,
+            COLA_FUENTES_MAESTRA_DIR,
+            COLA_FUENTES_OBJETIVOS_DIR,
+        ):
+            os.makedirs(path, exist_ok=True)
+    except Exception as e:
+        print(f'[WARN] Error creando directorios de cola en {COLA_DIR}: {e}. Usando fallback local...')
+        COLA_DIR = os.path.join(SCRIPT_DIR, 'alertas_cola')
+        COLA_IN_DIR = os.path.join(COLA_DIR, 'in')
+        COLA_PROCESANDO_DIR = os.path.join(COLA_DIR, 'procesando')
+        COLA_ARCHIVADOS_DIR = os.path.join(COLA_DIR, 'archivados')
+        COLA_PENDIENTES_DIR = os.path.join(COLA_DIR, 'pendientes')
+        COLA_CANCELADOS_DIR = os.path.join(COLA_DIR, 'cancelados')
+        COLA_FUENTES_DIR = os.path.join(COLA_DIR, 'fuentes_vacaciones')
+        COLA_FUENTES_MAESTRA_DIR = os.path.join(COLA_FUENTES_DIR, 'maestra')
+        COLA_FUENTES_OBJETIVOS_DIR = os.path.join(COLA_FUENTES_DIR, 'objetivos')
+        for path in (
+            COLA_DIR,
+            COLA_IN_DIR,
+            COLA_PROCESANDO_DIR,
+            COLA_ARCHIVADOS_DIR,
+            COLA_PENDIENTES_DIR,
+            COLA_CANCELADOS_DIR,
+            COLA_FUENTES_MAESTRA_DIR,
+            COLA_FUENTES_OBJETIVOS_DIR,
+        ):
+            os.makedirs(path, exist_ok=True)
 
     return COLA_DIR
 
@@ -2635,15 +2667,21 @@ def _cargar_maestro_universo():
 
         df.columns = [_norm(c) for c in df.columns]
 
-        # IMPORTANTE: NO filtrar por TyC — la tabla maestra es el universo completo
+        # Eliminar los primeros 3 registros del reporte SAP (filas fantasma/de sistema)
+        if len(df) > 3:
+            df = df.iloc[3:].reset_index(drop=True)
+            print(f'[MAESTRO-UNIVERSO] Primeros 3 registros eliminados (filas fantasma SAP)')
 
+        # IMPORTANTE: NO filtrar por TyC — la tabla maestra es el universo completo
         # necesitamos poder encontrar jefes de cualquier departamento.
 
         # Normalizar matricula: convertir float a int string con zfill(10)
-
         c_mat = _col(df, 'Matricula')
 
         if c_mat:
+            # Filtrar filas donde matricula sea vacía o nula antes de normalizar
+            df = df[df[c_mat].notna() & (df[c_mat].str.strip() != '') & (df[c_mat].str.strip() != 'nan')].copy()
+            df.reset_index(drop=True, inplace=True)
 
             df[c_mat] = df[c_mat].apply(lambda v: str(int(float(str(v).strip()))).zfill(10)
 
@@ -2654,7 +2692,6 @@ def _cargar_maestro_universo():
                                          else _norm_id(str(v)))
 
         # Normalizar Matricula Supervisor
-
         c_sup_mat = _col(df, 'Matricula Supervisor')
 
         if c_sup_mat:
@@ -2667,7 +2704,13 @@ def _cargar_maestro_universo():
 
                                                   else _norm_id(str(v)))
 
-        # Alias Email Trabajo -> Correo para el cruce
+        # Columna AD = Email Trabajo — fuente principal del correo del colaborador
+        # Si no existe 'Correo', lo creamos como alias de Email Trabajo
+        c_mail_trabajo = _col(df, 'Email Trabajo')
+        if c_mail_trabajo:
+            df['email trabajo'] = df[c_mail_trabajo].apply(lambda v: _norm_email(str(v)) if v and str(v).strip() not in ('', 'nan', 'None') else '')
+            if not _col(df, 'Correo'):
+                df['Correo'] = df['email trabajo']
 
         c_mail = _col(df, 'Email Trabajo')
 
@@ -2676,7 +2719,6 @@ def _cargar_maestro_universo():
             df['Correo'] = df[c_mail]
 
         # Construir columna combinada de nombre
-
         c_ap = _col(df, 'Apellido Paterno')
 
         c_am = _col(df, 'Apellido Materno')
@@ -9327,8 +9369,6 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
 
             '<body style="margin:0;padding:0;font-family:Segoe UI,Arial,sans-serif;background:#f5f5f5">'
 
-            '<div style="background:linear-gradient(135deg,#0c4a6e,#0369a1);padding:18px 24px;text-align:center"><h1 style="color:#fff;margin:0;font-size:20px">Alerta Vacaciones - USIL</h1><p style="color:#bae6fd;margin:4px 0 0;font-size:12px">People Analytics · Gestion Humana</p></div>'
-
             '<div style="max-width:960px;margin:20px auto;background:#fff;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,.1);padding:24px 28px">'
 
             + saludo_html +
@@ -14193,7 +14233,12 @@ def _bot_adryan_descargar(job):
                 job['lineas'].append('[BOT] ' + line)
         proc.wait()
         if proc.returncode != 0:
-            job['estado'] = 'error'; job['error'] = 'Fallo la descarga de Adryan (revisa logs del bot).'
+            lineas_str = ' '.join(job['lineas'])
+            if 'playwright' in lineas_str.lower() or 'No module named' in lineas_str:
+                job['estado'] = 'error'
+                job['error'] = 'Esta funcion requiere playwright, disponible solo en la maquina administrativa. Sube el archivo VACRptMotivo manualmente.'
+            else:
+                job['estado'] = 'error'; job['error'] = 'Fallo la descarga de Adryan (revisa logs del bot).'
             return False
         job['paso'] = 'Crudo descargado'; job['pct'] = max(job['pct'], 12)
         return True
@@ -14328,7 +14373,12 @@ def _pipeline_maestro_worker(job_id):
             _cargar_tabla_maestra_jefes()
             job['estado'] = 'done'; job['pct'] = 100; job['paso'] = 'Maestro actualizado'
         else:
-            job['estado'] = 'error'; job['error'] = 'Fallo la descarga del maestro.'
+            lineas_str = ' '.join(job['lineas'])
+            if 'playwright' in lineas_str.lower() or 'No module named' in lineas_str:
+                job['error'] = 'Esta funcion requiere playwright, disponible solo en la maquina administrativa.'
+            else:
+                job['error'] = 'Fallo la descarga del maestro.'
+            job['estado'] = 'error'
     except Exception as e:
         job['estado'] = 'error'; job['error'] = str(e)
     finally:

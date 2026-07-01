@@ -21,7 +21,13 @@ import shutil
 import datetime
 import traceback
 
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+try:
+    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+except ImportError:
+    print("ERROR: playwright no esta instalado en este entorno de Python.")
+    print("Esta funcion solo esta disponible desde la maquina administrativa.")
+    print("Para instalar: pip install playwright && playwright install chromium")
+    sys.exit(1)
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(AQUI, "config_bot.json")

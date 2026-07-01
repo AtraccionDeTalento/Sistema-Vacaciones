@@ -1,0 +1,108 @@
+{
+  "_acerca_de": "Configuracion del pipeline de Vacaciones USIL. Todas las rutas relativas se resuelven desde la carpeta PIPELINE (la carpeta superior a /motor). Editar este archivo NO requiere tocar el codigo.",
+
+  "entrada": {
+    "_comentario": "De donde sale el crudo de Adryan. Se toma el archivo mas reciente que cumpla el patron.",
+    "carpetas_descarga": [
+      "C:/Users/jlopezp/Downloads"
+    ],
+    "patron_crudo": "VACRptMotivo_*.xlsx",
+    "minutos_antiguedad_maxima": null
+  },
+
+  "salida": {
+    "_comentario": "Cada corrida parte del objetivo mas reciente (rolling) y produce una copia nueva fechada.",
+    "objetivo_plantilla": "Reporte Vacaciones Objetivo_Segundo Trimestre 2026.xlsx",
+    "usar_salida_mas_reciente_como_fuente": true,
+    "carpeta_salida": "SALIDAS",
+    "carpeta_respaldos": "RESPALDOS",
+    "carpeta_logs": "logs",
+    "prefijo_salida": "Reporte Vacaciones Objetivo_Segundo Trimestre 2026 - actualizado"
+  },
+
+  "excel": {
+    "visible": true,
+    "cerrar_al_terminar": true,
+    "actualizar_enlaces_externos": false
+  },
+
+  "hojas": {
+    "base": "base",
+    "pivote": "DB_Vac_07_05_2026",
+    "general": "BASE GENERAL",
+    "cumplimiento": "R_Cumplimiento"
+  },
+
+  "esquema_base": [
+    { "col": "A", "nombre": "Matrícula",          "tipo": "texto"  },
+    { "col": "B", "nombre": "Nombre",             "tipo": "texto"  },
+    { "col": "C", "nombre": "Unidad Funcional",   "tipo": "texto"  },
+    { "col": "D", "nombre": "Fecha Ingreso",      "tipo": "fecha"  },
+    { "col": "E", "nombre": "Periodo",            "tipo": "texto"  },
+    { "col": "F", "nombre": "Fecha Início",       "tipo": "fecha"  },
+    { "col": "G", "nombre": "Fecha Término",      "tipo": "fecha"  },
+    { "col": "H", "nombre": "Días",               "tipo": "entero" },
+    { "col": "I", "nombre": "Motivo",             "tipo": "texto"  },
+    { "col": "J", "nombre": "Delegación",         "tipo": "texto"  },
+    { "col": "K", "nombre": "OT",                 "tipo": "texto"  },
+    { "col": "L", "nombre": "Situacion",          "tipo": "texto"  },
+    { "col": "M", "nombre": "Año Pago",           "tipo": "texto"  },
+    { "col": "N", "nombre": "Mes Pago",           "tipo": "entero" },
+    { "col": "O", "nombre": "USUARIO APROBACIÓN", "tipo": "texto"  },
+    { "col": "P", "nombre": "FECHA APROBACIÓN",   "tipo": "texto"  },
+    { "col": "Q", "nombre": "OBSERVACIÓN",        "tipo": "texto", "preservar": true }
+  ],
+
+  "_nota_tipos": "fecha=texto dd/mm/aaaa -> fecha real; entero=texto -> numero; texto=se conserva tal cual (Matricula mantiene ceros a la izquierda).",
+  "formato_fecha_salida": "DD/MM/YYYY",
+  "clave_observacion": ["Matrícula", "Periodo", "Fecha Início", "Fecha Término", "Días"],
+
+  "limpieza_crudo": {
+    "_comentario": "La fila de cabecera se detecta buscando 'Matrícula' en la col A. Se conservan solo filas cuya Matricula sea 10 digitos (regex). Eso elimina metadatos y filas de grupo tipo 'SIN GRUPO'.",
+    "regex_matricula_valida": "^0*\\d+$"
+  },
+
+  "pivote": {
+    "_comentario": "El pivote y las formulas SUM(...:tope) y VLOOKUP se reajustan al numero real de registros + buffer.",
+    "tope_filas_minimo": 2000,
+    "buffer_filas": 300,
+    "tabla_espejo": {
+      "col_inicio": "L",
+      "col_fin": "S",
+      "fila_cabecera": 4,
+      "meses": [4, 5, 6, 7, 8]
+    }
+  },
+
+  "base_general": {
+    "_comentario": "Reglas verificadas contra los datos. fila_cabecera=2, datos desde fila 3.",
+    "fila_cabecera": 2,
+    "fila_primer_dato": 3,
+    "columnas": {
+      "matricula": "A",
+      "vac_vencidas": "M",
+      "vac_pendiente": "N",
+      "vac_truncos": "O",
+      "suma_total": "P",
+      "objetivo": "Q",
+      "meta": "R",
+      "obligatorio": "S",
+      "registradas": "T",
+      "meta_pct": "U",
+      "dias_restantes": "V"
+    },
+    "regla_meta": "=IF({Q}>0,\"Sí\",\"No\")",
+    "regla_obligatorio": "=IF(OR(N({M})>0,N({N})>0),\"Sí\",\"No\")",
+    "_regla_obligatorio_explicada": "Obligatorio = Sí solo si tiene Vac. Vencidas>0 o Vac. Pendiente>0. Si solo tiene truncos (o nada) = No, aunque tenga meta. Verificada al 100% contra 1779 filas reales."
+  },
+
+  "integracion_front": {
+    "_comentario": "Para que el dashboard (servidor.py, puerto 5002) muestre KPIs actualizados, la salida se PUBLICA en el archivo exacto que lee el front. Se respalda el archivo vivo antes de reemplazarlo. El cache del servidor se invalida solo por mtime.",
+    "publicar_en": [
+      "C:/Users/jlopezp/OneDrive - Universidad San Ignacio de Loyola/ACTIVIDADES/CESAR/SISTEMA DE VACACIONES/DATA SENSIBLE/Reporte Vacaciones Objetivo_Segundo Trimestre 2026.xlsx"
+    ],
+    "publicar_por_defecto": true,
+    "python_pipeline": "C:/Users/jlopezp/AppData/Local/Programs/Python/Python313/python.exe",
+    "url_adryan": "https://adryancloudusil.sapia.com.pe/Vacation/VacationMotiveReport/Index"
+  }
+}
