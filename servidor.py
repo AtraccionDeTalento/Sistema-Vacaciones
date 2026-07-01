@@ -9297,7 +9297,8 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
 
         por_prog = max(obj - int(goz), 0)
 
-        saldo    = round(max(total - goz, 0), 1)
+        # Saldo Final = días pendientes para cumplir la meta (no el saldo total de vacaciones)
+        saldo    = por_prog
 
         return (f'<tr style="border-bottom:1px solid #e9ecef">'
 
@@ -9481,15 +9482,22 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
 
 
 
+    # Intro breve antes de la tabla (saludo + contexto en 2 líneas)
+    intro_html = (
+        f'<p style="font-size:14px;color:#333;margin:0 0 4px 0">Hola, <strong>{nombre_destinatario}</strong>:</p>'
+        f'<p style="font-size:13px;color:#555;margin:0 0 10px 0">'
+        f'Desde la Subgerencia de Talento y Cultura compartimos el reporte de vacaciones '
+        f'de las personas a tu cargo para el trimestre <strong>{campania.get("trimestre", "vigente")}</strong>. '
+        f'Encuentra el detalle completo a continuación.</p>'
+    )
+
     return ('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>'
 
             '<body style="margin:0;padding:0;font-family:Segoe UI,Arial,sans-serif;background:#f5f5f5">'
 
             '<div style="max-width:960px;margin:20px auto;background:#fff;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,.1);padding:24px 28px">'
 
-            + saludo_html +
-
-            f'<div style="font-size:13px;color:#444;margin-top:8px;line-height:1.6">{msg_rendered}</div>'
+            + intro_html +
 
             '<div style="margin:10px 0 0 0;padding:10px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe">'
 
@@ -9506,6 +9514,8 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
             '</div>'
 
             + secs +
+
+            f'<div style="font-size:13px;color:#444;margin-top:18px;line-height:1.6">{msg_rendered}</div>'
 
             '<div style="margin-top:14px;padding:12px;background:#fff7ed;border-radius:8px;border:1px solid #fed7aa">'
 
