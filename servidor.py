@@ -9394,7 +9394,10 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
 
 
 
-    msg_jefe = plantilla_msg or _MSG_BASE_DEFAULT
+    msg_jefe = (plantilla_msg or _MSG_BASE_DEFAULT)
+    # Eliminar placeholder literal ( TABLA ) que algunos templates guardados tienen
+    for _placeholder in ('( TABLA )', '(TABLA)', '{tabla}', '[ TABLA ]'):
+        msg_jefe = msg_jefe.replace(_placeholder, '')
 
     aviso_final = aviso_txt or _AVISO_DEFAULT
 
@@ -9416,6 +9419,13 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
 
     meta_cols_pen = int(meta_resumen.get('colaboradores_pendientes', 0) or 0)
     hrbp_display = str(hrbp_nombre or '').strip() or _HRBP_TYC_DEFAULT
+    # Normalizar a nombre formal del pa_config si el apellido principal coincide
+    if hrbp_display and hrbp_display != _HRBP_TYC_DEFAULT:
+        _key_display = _nombre_cmp_key(hrbp_display)
+        _key_default = _nombre_cmp_key(_HRBP_TYC_DEFAULT)
+        # Si todos los tokens del nombre informal están contenidos en el nombre formal, usar el formal
+        if all(tok in _key_default for tok in _key_display.split() if len(tok) > 2):
+            hrbp_display = _HRBP_TYC_DEFAULT
 
     # El saludo siempre va dirigido al JEFE, no al colaborador objetivo
     nombre_destinatario = str(nombre_jefe or '').strip()
