@@ -69,18 +69,20 @@ function createWindow() {
 }
 
 // ─── Helpers de red ───────────────────────────────────────────────────────────
-function httpsGet(url, timeoutMs = 8000) {
+function httpsGet(url, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, {
       headers: { 'User-Agent': 'SistemaVacaciones-USIL/1.0' },
       timeout: timeoutMs
     }, res => {
-      // Seguir redirects
       if (res.statusCode === 301 || res.statusCode === 302) {
         return httpsGet(res.headers.location, timeoutMs).then(resolve).catch(reject);
       }
+      if (res.statusCode === 403) {
+        return reject(new Error('GitHub rate limit (403)'));
+      }
       if (res.statusCode !== 200) {
-        return reject(new Error(`HTTP ${res.statusCode} en ${url}`));
+        return reject(new Error(`HTTP ${res.statusCode}`));
       }
       const chunks = [];
       res.on('data', d => chunks.push(d));
@@ -96,6 +98,18 @@ function httpsGetText(url) {
 }
 
 // ─── AUTO-UPDATE desde GitHub ─────────────────────────────────────────────────
+async function descargarConReintentos(url, intentos = 3, timeoutMs = 20000) {
+  for (let i = 0; i < intentos; i++) {
+    try {
+      return await httpsGet(url, timeoutMs);
+    } catch (e) {
+      if (i === intentos - 1) throw e;
+      console.log(`[UPDATE] Reintento ${i + 1} para ${url}: ${e.message}`);
+      await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+    }
+  }
+}
+
 async function verificarActualizacion(baseDir) {
   const versionFile = path.join(baseDir, '.version_commit');
 
@@ -103,27 +117,34 @@ async function verificarActualizacion(baseDir) {
   let commitLocal = '';
   try { commitLocal = fs.readFileSync(versionFile, 'utf8').trim(); } catch (_) {}
 
-  // Consultar último commit en GitHub
+  // Consultar último commit en GitHub (con reintento)
   let commitRemoto = '';
-  try {
-    const json = await httpsGetText(API_COMMIT);
-    const data = JSON.parse(json);
-    commitRemoto = data.sha || '';
-  } catch (e) {
-    console.log('[UPDATE] Sin conexión o error GitHub:', e.message);
-    return false; // Sin internet: continuar normal
+  for (let intento = 0; intento < 3; intento++) {
+    try {
+      const json = await httpsGetText(API_COMMIT);
+      const data = JSON.parse(json);
+      commitRemoto = data.sha || '';
+      break;
+    } catch (e) {
+      console.log(`[UPDATE] Error consultando GitHub (intento ${intento + 1}):`, e.message);
+      if (intento < 2) await new Promise(r => setTimeout(r, 2000));
+    }
   }
 
-  if (!commitRemoto) return false;
+  if (!commitRemoto) {
+    console.log('[UPDATE] Sin conexión o sin respuesta de GitHub — continúa con versión local.');
+    return false;
+  }
+
   if (commitRemoto === commitLocal) {
     console.log('[UPDATE] App al día:', commitRemoto.slice(0, 7));
     return false;
   }
 
-  console.log(`[UPDATE] Nueva versión detectada: ${commitRemoto.slice(0, 7)} (local: ${commitLocal.slice(0, 7) || 'ninguna'})`);
+  console.log(`[UPDATE] Nueva versión: ${commitRemoto.slice(0, 7)} (local: ${commitLocal.slice(0, 7) || 'ninguna'})`);
   if (mainWindow) mainWindow.loadURL(loadingPage(
-    '🔄 Actualizando aplicación...',
-    `Nueva versión disponible. Descargando archivos actualizados...<br><small style="opacity:.6">${commitRemoto.slice(0,7)}</small>`
+    'Actualizando aplicación...',
+    `Nueva versión disponible. Descargando archivos...<br><small style="opacity:.6">${commitRemoto.slice(0,7)}</small>`
   ));
 
   let actualizados = 0;
@@ -131,25 +152,31 @@ async function verificarActualizacion(baseDir) {
 
   for (const archivo of ARCHIVOS_ACTUALIZABLES) {
     try {
-      const url = `${RAW_BASE}/${archivo}`;
-      const contenido = await httpsGet(url);
+      const url = `${RAW_BASE}/${encodeURIComponent(archivo).replace(/%2F/g, '/')}`;
+      const contenido = await descargarConReintentos(url, 3, 25000);
       const destino = path.join(baseDir, archivo.replace(/\//g, path.sep));
       const dir = path.dirname(destino);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(destino, contenido);
+      // Escribir a archivo temporal primero para evitar corrupción
+      const tmp = destino + '.tmp';
+      fs.writeFileSync(tmp, contenido);
+      fs.renameSync(tmp, destino);
       actualizados++;
       console.log(`[UPDATE] ✓ ${archivo}`);
     } catch (e) {
-      // Archivo puede no existir en repo todavía — no es fatal
-      console.log(`[UPDATE] - ${archivo}: ${e.message}`);
+      console.log(`[UPDATE] ✗ ${archivo}: ${e.message}`);
       errores++;
     }
   }
 
-  // Guardar commit remoto como versión local
-  fs.writeFileSync(versionFile, commitRemoto, 'utf8');
+  // Solo guardar el commit si descargamos al menos la mayoría
+  if (actualizados >= Math.ceil(ARCHIVOS_ACTUALIZABLES.length / 2)) {
+    fs.writeFileSync(versionFile, commitRemoto, 'utf8');
+    console.log(`[UPDATE] ✅ ${actualizados} archivos actualizados, ${errores} omitidos.`);
+  } else {
+    console.log(`[UPDATE] ⚠️ Solo ${actualizados}/${ARCHIVOS_ACTUALIZABLES.length} archivos descargados — no se guarda versión para reintentar en el próximo arranque.`);
+  }
 
-  console.log(`[UPDATE] Completado: ${actualizados} archivos actualizados, ${errores} omitidos.`);
   return actualizados > 0;
 }
 
