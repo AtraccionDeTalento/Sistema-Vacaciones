@@ -40,3 +40,4 @@ PIPELINE/estado_pipeline.json
 # Cache y temporales
 .claude/
 *.pkl
+.version_commit

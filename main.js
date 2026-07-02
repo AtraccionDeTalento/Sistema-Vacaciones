@@ -1,13 +1,35 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
-const { spawn, execFile } = require('child_process');
-const http = require('http');
-const fs = require('fs');
+const { spawn } = require('child_process');
+const http  = require('http');
+const https = require('https');
+const fs    = require('fs');
 
 let mainWindow;
 let pythonProcess;
 
-// ─── Pantalla de carga con estado ────────────────────────────────────────────
+// ─── Repositorio GitHub ───────────────────────────────────────────────────────
+const GITHUB_REPO  = 'AtraccionDeTalento/Sistema-Vacaciones';
+const GITHUB_BRANCH = 'main';
+const RAW_BASE = `https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}`;
+const API_COMMIT = `https://api.github.com/repos/${GITHUB_REPO}/commits/${GITHUB_BRANCH}`;
+
+// Archivos que se actualizan desde GitHub (no incluir pa_config ni datos del usuario)
+const ARCHIVOS_ACTUALIZABLES = [
+  'servidor.py',
+  'index_vacaciones.html',
+  'enviar_cola_outlook.py',
+  '_bp_map.py',
+  'requirements.txt',
+  'assets/js/app_completo.js',
+  'assets/js/pipeline_vac.js',
+  'assets/css/styles.css',
+  'PIPELINE/motor/pipeline.py',
+  'PIPELINE/motor/vac_lib.py',
+  'PIPELINE/motor/config.json',
+];
+
+// ─── Pantalla de carga ────────────────────────────────────────────────────────
 function loadingPage(mensaje, subMensaje = '', esError = false) {
   const color  = esError ? '#fef2f2' : '#f0f9ff';
   const titCol = esError ? '#b91c1c' : '#0f6ea5';
@@ -30,58 +52,149 @@ function loadingPage(mensaje, subMensaje = '', esError = false) {
   ${subMensaje ? `<p>${subMensaje}</p>` : ''}
   ${!esError ? '<div class="bar"><div class="fill"></div></div>' : ''}
   </body></html>`;
-  
   return 'data:text/html;base64,' + Buffer.from(html).toString('base64');
 }
 
-// ─── Crear ventana principal ──────────────────────────────────────────────────
+// ─── Ventana principal ────────────────────────────────────────────────────────
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: 1280, height: 800,
     icon: path.join(__dirname, 'icon.png'),
     autoHideMenuBar: true,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true
-    }
+    webPreferences: { nodeIntegration: false, contextIsolation: true }
   });
-
   mainWindow.maximize();
-  mainWindow.loadURL(loadingPage('Iniciando Sistema de Vacaciones USIL...', 'Preparando el motor de datos...'));
+  mainWindow.loadURL(loadingPage('Sistema de Vacaciones USIL', 'Iniciando...'));
+  mainWindow.on('closed', () => { mainWindow = null; });
+}
 
-  mainWindow.on('closed', function () {
-    mainWindow = null;
+// ─── Helpers de red ───────────────────────────────────────────────────────────
+function httpsGet(url, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, {
+      headers: { 'User-Agent': 'SistemaVacaciones-USIL/1.0' },
+      timeout: timeoutMs
+    }, res => {
+      // Seguir redirects
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        return httpsGet(res.headers.location, timeoutMs).then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) {
+        return reject(new Error(`HTTP ${res.statusCode} en ${url}`));
+      }
+      const chunks = [];
+      res.on('data', d => chunks.push(d));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
   });
 }
 
-// ─── Ejecutar un comando Python y esperar a que termine ──────────────────────
+function httpsGetText(url) {
+  return httpsGet(url).then(b => b.toString('utf8'));
+}
+
+// ─── AUTO-UPDATE desde GitHub ─────────────────────────────────────────────────
+async function verificarActualizacion(baseDir) {
+  const versionFile = path.join(baseDir, '.version_commit');
+
+  // Leer commit local guardado
+  let commitLocal = '';
+  try { commitLocal = fs.readFileSync(versionFile, 'utf8').trim(); } catch (_) {}
+
+  // Consultar último commit en GitHub
+  let commitRemoto = '';
+  try {
+    const json = await httpsGetText(API_COMMIT);
+    const data = JSON.parse(json);
+    commitRemoto = data.sha || '';
+  } catch (e) {
+    console.log('[UPDATE] Sin conexión o error GitHub:', e.message);
+    return false; // Sin internet: continuar normal
+  }
+
+  if (!commitRemoto) return false;
+  if (commitRemoto === commitLocal) {
+    console.log('[UPDATE] App al día:', commitRemoto.slice(0, 7));
+    return false;
+  }
+
+  console.log(`[UPDATE] Nueva versión detectada: ${commitRemoto.slice(0, 7)} (local: ${commitLocal.slice(0, 7) || 'ninguna'})`);
+  if (mainWindow) mainWindow.loadURL(loadingPage(
+    '🔄 Actualizando aplicación...',
+    `Nueva versión disponible. Descargando archivos actualizados...<br><small style="opacity:.6">${commitRemoto.slice(0,7)}</small>`
+  ));
+
+  let actualizados = 0;
+  let errores = 0;
+
+  for (const archivo of ARCHIVOS_ACTUALIZABLES) {
+    try {
+      const url = `${RAW_BASE}/${archivo}`;
+      const contenido = await httpsGet(url);
+      const destino = path.join(baseDir, archivo.replace(/\//g, path.sep));
+      const dir = path.dirname(destino);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(destino, contenido);
+      actualizados++;
+      console.log(`[UPDATE] ✓ ${archivo}`);
+    } catch (e) {
+      // Archivo puede no existir en repo todavía — no es fatal
+      console.log(`[UPDATE] - ${archivo}: ${e.message}`);
+      errores++;
+    }
+  }
+
+  // Guardar commit remoto como versión local
+  fs.writeFileSync(versionFile, commitRemoto, 'utf8');
+
+  console.log(`[UPDATE] Completado: ${actualizados} archivos actualizados, ${errores} omitidos.`);
+  return actualizados > 0;
+}
+
+// ─── Acceso directo en el Escritorio ─────────────────────────────────────────
+function crearAccesoDirecto(baseDir) {
+  try {
+    const { execFile } = require('child_process');
+    const exeRuta = app.getPath('exe');
+    const escritorio = app.getPath('desktop');
+    const lnk = path.join(escritorio, 'Sistema de Vacaciones USIL.lnk');
+    if (fs.existsSync(lnk)) return; // ya existe
+
+    // Usar PowerShell para crear el acceso directo
+    const script = `
+      $s=(New-Object -COM WScript.Shell).CreateShortcut('${lnk.replace(/\\/g, '\\\\')}');
+      $s.TargetPath='${exeRuta.replace(/\\/g, '\\\\')}';
+      $s.Description='Sistema de Vacaciones USIL';
+      $s.WorkingDirectory='${baseDir.replace(/\\/g, '\\\\')}';
+      $s.Save()
+    `;
+    execFile('powershell', ['-NoProfile', '-Command', script], err => {
+      if (err) console.log('[SHORTCUT] Error:', err.message);
+      else console.log('[SHORTCUT] Acceso directo creado en Escritorio');
+    });
+  } catch (e) {
+    console.log('[SHORTCUT] No se pudo crear acceso directo:', e.message);
+  }
+}
+
+// ─── Ejecutar comando Python ──────────────────────────────────────────────────
 function runPythonCmd(pythonExe, args, cwd) {
   return new Promise((resolve, reject) => {
     const currentDir = cwd || (app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname);
     const proc = spawn(pythonExe, args, { cwd: currentDir, shell: false });
-    let out = '';
-    let err = '';
+    let out = '', err = '';
     proc.stdout.on('data', d => { out += d.toString(); });
     proc.stderr.on('data', d => { err += d.toString(); });
-    proc.on('close', code => {
-      if (code === 0) resolve(out);
-      else reject(new Error(err || `Exit code ${code}`));
-    });
+    proc.on('close', code => { code === 0 ? resolve(out) : reject(new Error(err || `Exit ${code}`)); });
     proc.on('error', reject);
   });
 }
 
-// ─── Buscar Python instalado en el sistema ───────────────────────────────────
 async function detectarPython() {
-  const candidatos = ['python', 'python3', 'py'];
-  for (const py of candidatos) {
-    try {
-      await runPythonCmd(py, ['--version']);
-      return py;
-    } catch (e) {
-      // siguiente candidato
-    }
+  for (const py of ['python', 'python3', 'py']) {
+    try { await runPythonCmd(py, ['--version']); return py; } catch (_) {}
   }
   return null;
 }
@@ -89,138 +202,107 @@ async function detectarPython() {
 // ─── Setup + arranque del servidor ───────────────────────────────────────────
 async function setupAndStartServer() {
   const baseDir = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
-  const venvDir = app.isPackaged ? path.join(app.getPath('userData'), '.venv') : path.join(baseDir, '.venv');
+  const venvDir = app.isPackaged
+    ? path.join(app.getPath('userData'), '.venv')
+    : path.join(baseDir, '.venv');
   const venvPython  = path.join(venvDir, 'Scripts', 'python.exe');
   const serverScript = path.join(baseDir, 'servidor.py');
   const requirements = path.join(baseDir, 'requirements.txt');
 
-  // 1. ¿Ya tiene .venv? Arrancar directo.
+  // Crear acceso directo al escritorio (silencioso, solo primera vez)
+  if (app.isPackaged) crearAccesoDirecto(baseDir);
+
+  // ── Auto-update ──────────────────────────────────────────────────────────
+  if (mainWindow) mainWindow.loadURL(loadingPage(
+    'Verificando actualizaciones...',
+    'Consultando GitHub para ver si hay una versión más reciente...'
+  ));
+  try {
+    await verificarActualizacion(baseDir);
+  } catch (e) {
+    console.log('[UPDATE] Error no fatal:', e.message);
+  }
+
+  // ── Arrancar Python ───────────────────────────────────────────────────────
   if (fs.existsSync(venvPython)) {
     console.log('[BOOT] .venv encontrado → arrancando servidor...');
+    if (mainWindow) mainWindow.loadURL(loadingPage('Iniciando servidor...', 'Preparando el motor de datos...'));
     startPythonServer(venvPython, serverScript);
     return;
   }
 
-  // 2. Buscar Python global.
+  // Primera vez: buscar Python global
   if (mainWindow) mainWindow.loadURL(loadingPage(
     'Primera vez en este equipo',
     'Buscando Python instalado en el sistema...'
   ));
 
   const pythonGlobal = await detectarPython();
-
   if (!pythonGlobal) {
     if (mainWindow) mainWindow.loadURL(loadingPage(
       'Python no encontrado',
-      'Este sistema requiere Python 3.10+ instalado.<br>' +
-      'Descárgalo desde <b>python.org</b>, instálalo marcando "Add to PATH" y vuelve a abrir la app.',
+      'Este sistema requiere Python 3.10+.<br>Descárgalo desde <b>python.org</b>, instálalo marcando "Add to PATH" y vuelve a abrir la app.',
       true
     ));
     return;
   }
 
-  // 3. Verificar si el Python global ya tiene las dependencias requeridas instaladas
-  if (mainWindow) mainWindow.loadURL(loadingPage(
-    'Verificando tecnologías',
-    'Verificando si ya tienes las dependencias de Python necesarias instaladas...'
-  ));
-
+  // ¿Python global ya tiene las dependencias?
+  if (mainWindow) mainWindow.loadURL(loadingPage('Verificando dependencias...', 'Comprobando librerías instaladas...'));
   try {
-    console.log('[BOOT] Probando si Python global ya tiene las librerías necesarias...');
-    await runPythonCmd(pythonGlobal, ['-c', 'import flask, pandas, openpyxl']);
-    console.log('[BOOT] ¡Librerías encontradas en Python global! Arrancando directamente...');
-    
-    if (mainWindow) mainWindow.loadURL(loadingPage(
-      'Listo. Iniciando el sistema...',
-      'Abriendo el Sistema de Vacaciones USIL...'
-    ));
-
+    await runPythonCmd(pythonGlobal, ['-c', 'import flask, pandas, openpyxl, win32com']);
+    if (mainWindow) mainWindow.loadURL(loadingPage('Listo. Iniciando...', 'Abriendo el Sistema de Vacaciones USIL...'));
     startPythonServer(pythonGlobal, serverScript);
     return;
-  } catch (e) {
-    console.log('[BOOT] Falta alguna dependencia en Python global. Se procederá a crear un entorno virtual local...');
-  }
+  } catch (_) {}
 
-  // 4. Crear entorno virtual.
+  // Crear entorno virtual
   if (mainWindow) mainWindow.loadURL(loadingPage(
     'Configurando entorno (primera vez)',
-    'Creando entorno virtual Python...<br>Esto puede tardar 1-2 minutos la primera vez.'
+    'Creando entorno virtual Python...<br>Esto ocurre solo una vez en este equipo.'
   ));
-
   try {
     await runPythonCmd(pythonGlobal, ['-m', 'venv', venvDir]);
-    console.log('[BOOT] .venv creado OK en: ' + venvDir);
   } catch (e) {
-    if (mainWindow) mainWindow.loadURL(loadingPage(
-      'Error al crear entorno',
-      `No se pudo crear el entorno virtual: ${e.message}`,
-      true
-    ));
+    if (mainWindow) mainWindow.loadURL(loadingPage('Error al crear entorno', e.message, true));
     return;
   }
 
-  // 5. Instalar dependencias.
+  // Instalar dependencias
   if (mainWindow) mainWindow.loadURL(loadingPage(
     'Instalando dependencias',
-    'Descargando e instalando Flask, Pandas, OpenPyXL...<br>Solo ocurre la primera vez en este equipo.'
+    'Descargando Flask, Pandas, OpenPyXL, pywin32...<br>Solo ocurre la primera vez.'
   ));
-
   try {
     await runPythonCmd(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip', '--quiet']);
     await runPythonCmd(venvPython, ['-m', 'pip', 'install', '-r', requirements, '--quiet']);
-    console.log('[BOOT] Dependencias instaladas OK');
   } catch (e) {
-    if (mainWindow) mainWindow.loadURL(loadingPage(
-      'Error al instalar dependencias',
-      `Problema instalando librerías: ${e.message}`,
-      true
-    ));
+    if (mainWindow) mainWindow.loadURL(loadingPage('Error al instalar dependencias', e.message, true));
     return;
   }
 
-  // 6. Todo listo → arrancar servidor.
-  if (mainWindow) mainWindow.loadURL(loadingPage(
-    'Listo. Iniciando el sistema...',
-    'Abriendo el Sistema de Vacaciones USIL...'
-  ));
-
+  if (mainWindow) mainWindow.loadURL(loadingPage('Listo. Iniciando...', 'Abriendo el Sistema de Vacaciones USIL...'));
   startPythonServer(venvPython, serverScript);
 }
 
-// ─── Arrancar proceso Python (Flask) ─────────────────────────────────────────
+// ─── Arrancar Flask ───────────────────────────────────────────────────────────
 function startPythonServer(pythonExe, serverScript) {
   const baseDir = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
-  pythonProcess = spawn(pythonExe, [serverScript], {
-    cwd: baseDir
+  pythonProcess = spawn(pythonExe, [serverScript], { cwd: baseDir });
+  pythonProcess.stdout.on('data', d => console.log(`[Python] ${d}`));
+  pythonProcess.stderr.on('data', d => console.error(`[Python Err] ${d}`));
+  pythonProcess.on('error', err => {
+    if (mainWindow) mainWindow.loadURL(loadingPage('Error iniciando servidor', err.message, true));
   });
-
-  pythonProcess.stdout.on('data', (data) => {
-    console.log(`[Python] ${data}`);
-  });
-
-  pythonProcess.stderr.on('data', (data) => {
-    console.error(`[Python Err] ${data}`);
-  });
-
-  pythonProcess.on('error', (err) => {
-    console.error('[Python] No se pudo iniciar:', err);
-    if (mainWindow) mainWindow.loadURL(loadingPage(
-      'Error iniciando el servidor',
-      `Python no pudo arrancar: ${err.message}`,
-      true
-    ));
-  });
-
-  // Hacer "ping" al servidor hasta que responda
   setTimeout(checkServerReady, 2000);
 }
 
-// ─── Esperar a que Flask responda ────────────────────────────────────────────
+// ─── Ping hasta que Flask responda ───────────────────────────────────────────
 function checkServerReady() {
   const req = http.request(
     { hostname: '127.0.0.1', port: 5002, path: '/', method: 'GET' },
-    (res) => {
-      if ([200, 302, 404].includes(res.statusCode)) {
+    res => {
+      if ([200, 302, 304, 404].includes(res.statusCode)) {
         if (mainWindow) mainWindow.loadURL('http://127.0.0.1:5002');
       } else {
         setTimeout(checkServerReady, 1000);
@@ -231,35 +313,25 @@ function checkServerReady() {
   req.end();
 }
 
-// ─── Ciclo de vida de la app ──────────────────────────────────────────────────
+// ─── Ciclo de vida ────────────────────────────────────────────────────────────
 app.on('ready', () => {
   createWindow();
   setupAndStartServer().catch(err => {
     console.error('[BOOT] Error inesperado:', err);
-    if (mainWindow) mainWindow.loadURL(loadingPage(
-      'Error inesperado al iniciar',
-      err.message,
-      true
-    ));
+    if (mainWindow) mainWindow.loadURL(loadingPage('Error inesperado al iniciar', err.message, true));
   });
 });
 
-app.on('window-all-closed', function () {
-  // Al cerrar todas las ventanas → cerrar la app + matar Python
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('quit', () => {
-  // Garantizar que el servidor Flask muere con la app
   if (pythonProcess && !pythonProcess.killed) {
     try {
-      // En Windows: matar el proceso y todos sus hijos
-      spawn('taskkill', ['/pid', String(pythonProcess.pid), '/f', '/t'], {
-        detached: true, stdio: 'ignore'
-      }).unref();
-    } catch (e) {
+      spawn('taskkill', ['/pid', String(pythonProcess.pid), '/f', '/t'],
+        { detached: true, stdio: 'ignore' }).unref();
+    } catch (_) {
       try { pythonProcess.kill('SIGKILL'); } catch (_) {}
     }
   }
