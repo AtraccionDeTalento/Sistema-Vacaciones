@@ -76,38 +76,35 @@ def hacer_login(page, cfg, password):
 
 
 def _navegar_menu_maestro(page):
-    """Fallback: navegar por el menu lateral icono Personal > Maestro del Personal."""
+    """Navegar por el menu: Personal > Maestro del Personal sin filtro."""
     page.goto("https://adryancloudusil.sapia.com.pe/Home/IndexAdminDashboard",
               wait_until="domcontentloaded")
     page.wait_for_load_state("networkidle")
-    time.sleep(2)
+    page.wait_for_timeout(2000)
 
-    # Los iconos del menu lateral no tienen aria-label; buscamos por titulo/href
-    found = page.evaluate("""() => {
-        const links = document.querySelectorAll('a[title], a[data-original-title]');
-        for (const a of links) {
-            const t = (a.title || a.getAttribute('data-original-title') || '').toLowerCase();
-            if (t.includes('personal')) { a.click(); return 'clicked-title'; }
-        }
-        // Fallback: buscar por texto del submenu
-        const all = document.querySelectorAll('.sidebar a, .menu-lateral a, nav a, #sidebar a');
-        for (const a of all) {
-            const t = (a.textContent || '').trim().toLowerCase();
-            if (t === 'personal') { a.click(); return 'clicked-text'; }
-        }
-        // Ultimo intento: segundo icono del menu lateral
-        const icons = document.querySelectorAll('.sidebar-menu > li > a, .nav-sidebar > li > a');
-        if (icons.length >= 2) { icons[1].click(); return 'clicked-index'; }
-        return 'not-found';
-    }""")
-    log(f"Menu Personal: {found}")
-    time.sleep(2)
+    # Clic en el item de menu "Personal" (igual que el script grabado)
+    try:
+        page.get_by_role("link", name="Personal").first.click()
+        page.wait_for_timeout(1500)
+    except Exception:
+        # Fallback JS
+        page.evaluate("""() => {
+            const all = [...document.querySelectorAll('a')];
+            const a = all.find(el => (el.textContent || '').trim() === 'Personal');
+            if (a) a.click();
+        }""")
+        page.wait_for_timeout(1500)
 
-    # Buscar submenu "Maestro del Personal"
-    page.get_by_text("Maestro del Personal", exact=False).first.click()
+    # Clic en "Maestro del Personal sin [filtro]"
+    try:
+        page.get_by_role("link", name="Maestro del Personal sin").click()
+    except Exception:
+        # Fallback: buscar por texto parcial
+        page.get_by_role("link", name="Maestro del Personal").first.click()
+
     page.wait_for_load_state("networkidle")
-    time.sleep(3)
-    log("Maestro abierto por menu lateral.")
+    page.wait_for_timeout(3000)
+    log("Maestro abierto.")
 
 
 def descargar_maestro(page, cfg) -> str:
@@ -128,22 +125,28 @@ def descargar_maestro(page, cfg) -> str:
         _navegar_menu_maestro(page)
 
     log("Descargando maestro...")
+    timeout_dl = max(cfg.get("timeout_ms", 60000), 120000)  # minimo 2 minutos
 
     # La descarga se dispara via JS (reportpersonallistjs.export(0)),
     # no por navegacion. Usamos expect_download + evaluate para capturarla.
     try:
-        with page.expect_download(timeout=cfg["timeout_ms"]) as dl_info:
+        with page.expect_download(timeout=timeout_dl) as dl_info:
             page.evaluate("reportpersonallistjs.export(0)")
         download = dl_info.value
     except PWTimeout:
-        # Fallback: intentar con click + no_wait_after
+        # Fallback: intentar con click en el boton de descarga
         log("evaluate no disparo descarga, reintentando con click...")
-        with page.expect_download(timeout=cfg["timeout_ms"]) as dl_info:
+        with page.expect_download(timeout=timeout_dl) as dl_info:
             page.locator(".ctn-iconos-edit-tabla > a").first.click(no_wait_after=True)
         download = dl_info.value
 
     nombre = download.suggested_filename or f"PersonalMaestro_{datetime.datetime.now():%m_%d_%Y %H_%M_%S}.xlsx"
-    destino = os.path.join(cfg["carpeta_descarga"], nombre)
+    carpeta = cfg.get("carpeta_descarga", "").strip()
+    if not carpeta or not os.path.isdir(carpeta):
+        carpeta = os.path.join(os.path.expanduser("~"), "Downloads")
+        os.makedirs(carpeta, exist_ok=True)
+        log(f"carpeta_descarga no encontrada; usando {carpeta}")
+    destino = os.path.join(carpeta, nombre)
     download.save_as(destino)
     log(f"Descargado: {destino}")
     return destino
