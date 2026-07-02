@@ -128,19 +128,55 @@ def fijar_filtros(page, cfg):
     log(f"Filtros aplicados: {res}")
 
 
+def _carpeta_descarga(cfg) -> str:
+    """Devuelve la carpeta de descarga: la del config si existe, si no la del usuario."""
+    c = cfg.get("carpeta_descarga", "").strip()
+    if c and os.path.isdir(c):
+        return c
+    fallback = os.path.join(os.path.expanduser("~"), "Downloads")
+    os.makedirs(fallback, exist_ok=True)
+    log(f"carpeta_descarga '{c}' no encontrada; usando {fallback}")
+    return fallback
+
+
 def buscar_y_descargar(page, cfg) -> str:
     log("Clic en Buscar...")
     page.get_by_role("button", name="Buscar").click()
     page.wait_for_load_state("networkidle")
-    time.sleep(2)  # deja que se pinte la tabla
+    page.wait_for_timeout(3000)  # deja que se pinte la tabla
 
     log("Descargando reporte...")
-    with page.expect_download(timeout=cfg["timeout_ms"]) as dl_info:
-        page.locator(".mr-3").first.click()
-    download = dl_info.value
+    timeout_dl = max(cfg.get("timeout_ms", 60000), 120000)  # minimo 2 minutos
 
+    # Intentar varios selectores del boton de descarga Excel
+    selectors = [
+        ".mr-3",
+        "button.mr-3",
+        "[title*='xcel']",
+        "[class*='excel']",
+        "button[onclick*='xcel']",
+        ".btn-success.mr-3",
+        ".mr-3.btn",
+    ]
+    clicked = False
+    for sel in selectors:
+        try:
+            el = page.locator(sel).first
+            if el.is_visible(timeout=3000):
+                with page.expect_download(timeout=timeout_dl) as dl_info:
+                    el.click()
+                download = dl_info.value
+                clicked = True
+                break
+        except Exception:
+            continue
+
+    if not clicked:
+        raise RuntimeError("No se encontro el boton de descarga Excel en la pagina.")
+
+    carpeta = _carpeta_descarga(cfg)
     nombre = download.suggested_filename or f"{cfg['patron_crudo']}_{datetime.datetime.now():%m_%d_%Y %H_%M_%S}.xlsx"
-    destino = os.path.join(cfg["carpeta_descarga"], nombre)
+    destino = os.path.join(carpeta, nombre)
     download.save_as(destino)
     log(f"Descargado: {destino}")
     return destino

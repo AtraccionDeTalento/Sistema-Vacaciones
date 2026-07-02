@@ -27,6 +27,9 @@ const ARCHIVOS_ACTUALIZABLES = [
   'PIPELINE/motor/pipeline.py',
   'PIPELINE/motor/vac_lib.py',
   'PIPELINE/motor/config.json',
+  'PIPELINE/bot_adryan/bot_adryan.py',
+  'PIPELINE/bot_adryan/bot_maestro.py',
+  'PIPELINE/bot_adryan/guardar_password.py',
 ];
 
 // ─── Pantalla de carga ────────────────────────────────────────────────────────
