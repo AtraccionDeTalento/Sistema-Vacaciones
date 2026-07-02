@@ -101,83 +101,118 @@ function httpsGetText(url) {
 }
 
 // ─── AUTO-UPDATE desde GitHub ─────────────────────────────────────────────────
-async function descargarConReintentos(url, intentos = 3, timeoutMs = 20000) {
-  for (let i = 0; i < intentos; i++) {
+let _updateLogFile = null;
+
+function uLog(baseDir, msg) {
+  const linea = `[${new Date().toISOString()}] ${msg}`;
+  console.log(linea);
+  try {
+    if (!_updateLogFile) _updateLogFile = path.join(baseDir, 'update.log');
+    // Rotar si supera 200KB
     try {
-      return await httpsGet(url, timeoutMs);
-    } catch (e) {
-      if (i === intentos - 1) throw e;
-      console.log(`[UPDATE] Reintento ${i + 1} para ${url}: ${e.message}`);
-      await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+      if (fs.existsSync(_updateLogFile) && fs.statSync(_updateLogFile).size > 200 * 1024) {
+        fs.renameSync(_updateLogFile, _updateLogFile + '.old');
+      }
+    } catch (_) {}
+    fs.appendFileSync(_updateLogFile, linea + '\n', 'utf8');
+  } catch (_) {}
+}
+
+function uScreen(titulo, detalle) {
+  if (mainWindow) mainWindow.loadURL(loadingPage(titulo, detalle));
+}
+
+async function descargarConReintentos(url, intentos = 3, timeoutMs = 25000) {
+  let ultimo;
+  for (let i = 0; i < intentos; i++) {
+    try { return await httpsGet(url, timeoutMs); }
+    catch (e) {
+      ultimo = e;
+      if (i < intentos - 1) await new Promise(r => setTimeout(r, 2000 * (i + 1)));
     }
   }
+  throw ultimo;
 }
 
 async function verificarActualizacion(baseDir) {
-  const versionFile = path.join(baseDir, '.version_commit');
+  _updateLogFile = path.join(baseDir, 'update.log');
+  uLog(baseDir, `=== Inicio verificación de actualización ===`);
+  uLog(baseDir, `baseDir: ${baseDir}`);
 
-  // Leer commit local guardado
+  const versionFile = path.join(baseDir, '.version_commit');
   let commitLocal = '';
   try { commitLocal = fs.readFileSync(versionFile, 'utf8').trim(); } catch (_) {}
+  uLog(baseDir, `Versión local: ${commitLocal.slice(0,7) || '(ninguna)'}`);
 
-  // Consultar último commit en GitHub (con reintento)
+  uScreen('Verificando actualizaciones...', `Consultando GitHub...<br><small style="opacity:.5">Versión local: ${commitLocal.slice(0,7) || 'nueva instalación'}</small>`);
+
+  // Consultar GitHub con reintentos
   let commitRemoto = '';
-  for (let intento = 0; intento < 3; intento++) {
+  for (let i = 0; i < 3; i++) {
     try {
+      uLog(baseDir, `Consultando GitHub API (intento ${i+1})...`);
       const json = await httpsGetText(API_COMMIT);
       const data = JSON.parse(json);
-      commitRemoto = data.sha || '';
+      commitRemoto = (data.sha || '').trim();
+      uLog(baseDir, `GitHub respondió: ${commitRemoto.slice(0,7)}`);
       break;
     } catch (e) {
-      console.log(`[UPDATE] Error consultando GitHub (intento ${intento + 1}):`, e.message);
-      if (intento < 2) await new Promise(r => setTimeout(r, 2000));
+      uLog(baseDir, `Error GitHub intento ${i+1}: ${e.message}`);
+      if (i < 2) await new Promise(r => setTimeout(r, 3000));
     }
   }
 
   if (!commitRemoto) {
-    console.log('[UPDATE] Sin conexión o sin respuesta de GitHub — continúa con versión local.');
+    uLog(baseDir, 'Sin respuesta de GitHub — continuando con versión local.');
+    uScreen('Sin conexión a GitHub', 'Continuando con la versión instalada...');
+    await new Promise(r => setTimeout(r, 1500));
     return false;
   }
 
   if (commitRemoto === commitLocal) {
-    console.log('[UPDATE] App al día:', commitRemoto.slice(0, 7));
+    uLog(baseDir, `App al día (${commitRemoto.slice(0,7)}) — no hay actualización.`);
     return false;
   }
 
-  console.log(`[UPDATE] Nueva versión: ${commitRemoto.slice(0, 7)} (local: ${commitLocal.slice(0, 7) || 'ninguna'})`);
-  if (mainWindow) mainWindow.loadURL(loadingPage(
-    'Actualizando aplicación...',
-    `Nueva versión disponible. Descargando archivos...<br><small style="opacity:.6">${commitRemoto.slice(0,7)}</small>`
-  ));
+  uLog(baseDir, `NUEVA VERSIÓN: ${commitRemoto.slice(0,7)} (local: ${commitLocal.slice(0,7) || 'ninguna'})`);
+  uScreen('Actualizando aplicación...', `Descargando nueva versión <b>${commitRemoto.slice(0,7)}</b>...<br><small style="opacity:.5">Espera un momento, solo ocurre cuando hay cambios.</small>`);
 
-  let actualizados = 0;
-  let errores = 0;
+  let actualizados = 0, errores = 0;
 
-  for (const archivo of ARCHIVOS_ACTUALIZABLES) {
+  for (let idx = 0; idx < ARCHIVOS_ACTUALIZABLES.length; idx++) {
+    const archivo = ARCHIVOS_ACTUALIZABLES[idx];
+    const pct = Math.round(((idx + 1) / ARCHIVOS_ACTUALIZABLES.length) * 100);
+    uScreen(
+      'Actualizando aplicación...',
+      `[${pct}%] Descargando ${archivo.split('/').pop()}...<br><small style="opacity:.5">${idx+1}/${ARCHIVOS_ACTUALIZABLES.length} archivos</small>`
+    );
     try {
-      const url = `${RAW_BASE}/${encodeURIComponent(archivo).replace(/%2F/g, '/')}`;
+      const url = `${RAW_BASE}/${archivo}`;
+      uLog(baseDir, `Descargando: ${url}`);
       const contenido = await descargarConReintentos(url, 3, 25000);
       const destino = path.join(baseDir, archivo.replace(/\//g, path.sep));
       const dir = path.dirname(destino);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      // Escribir a archivo temporal primero para evitar corrupción
       const tmp = destino + '.tmp';
       fs.writeFileSync(tmp, contenido);
+      if (fs.existsSync(destino)) fs.unlinkSync(destino);
       fs.renameSync(tmp, destino);
       actualizados++;
-      console.log(`[UPDATE] ✓ ${archivo}`);
+      uLog(baseDir, `✓ ${archivo} (${contenido.length} bytes)`);
     } catch (e) {
-      console.log(`[UPDATE] ✗ ${archivo}: ${e.message}`);
+      uLog(baseDir, `✗ ${archivo}: ${e.message}`);
       errores++;
     }
   }
 
-  // Solo guardar el commit si descargamos al menos la mayoría
-  if (actualizados >= Math.ceil(ARCHIVOS_ACTUALIZABLES.length / 2)) {
+  const ok = actualizados >= Math.ceil(ARCHIVOS_ACTUALIZABLES.length / 2);
+  if (ok) {
     fs.writeFileSync(versionFile, commitRemoto, 'utf8');
-    console.log(`[UPDATE] ✅ ${actualizados} archivos actualizados, ${errores} omitidos.`);
+    uLog(baseDir, `✅ Actualización completa: ${actualizados} OK, ${errores} errores.`);
+    uScreen('¡Actualización completada!', `${actualizados} archivos actualizados.<br><small style="opacity:.5">Iniciando servidor...</small>`);
+    await new Promise(r => setTimeout(r, 1200));
   } else {
-    console.log(`[UPDATE] ⚠️ Solo ${actualizados}/${ARCHIVOS_ACTUALIZABLES.length} archivos descargados — no se guarda versión para reintentar en el próximo arranque.`);
+    uLog(baseDir, `⚠️ Solo ${actualizados}/${ARCHIVOS_ACTUALIZABLES.length} descargados — se reintentará próximo arranque.`);
   }
 
   return actualizados > 0;
