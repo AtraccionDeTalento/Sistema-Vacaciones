@@ -897,11 +897,29 @@ def _smtp_procesar_in():
 
 
 def _outlook_procesar_in():
-    """Fallback automático: si un archivo lleva >3 min en in/ sin que PA lo procese,
+    """Fallback automático: si un archivo lleva >15 min en in/ sin que PA lo procese,
     lo enviamos por Outlook COM y lo movemos a procesados/.
     No requiere SMTP AUTH — usa la sesión de Outlook ya abierta."""
+    cfg = {}
+    if _PA_CONFIG_PATH and os.path.isfile(_PA_CONFIG_PATH):
+        try:
+            with open(_PA_CONFIG_PATH, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+        except Exception:
+            pass
+    if not cfg:
+        cfg = _PA_CONFIG
+
+    fallback_enabled = cfg.get('outlook_fallback_enabled', True)
+    if not fallback_enabled:
+        return
+
+    minutos_espera = cfg.get('outlook_fallback_wait_minutes', 15)
+    if minutos_espera <= 0:
+        return
+
     import subprocess as _sp
-    ESPERA = 3 * 60
+    ESPERA = minutos_espera * 60
     ahora = time.time()
     try:
         pendientes = [
@@ -940,6 +958,8 @@ def _cola_pa_loop():
 
     print(f'[COLA-PA] Delay activo: {_PA_DELAY_SECONDS}s | pendientes: {COLA_PENDIENTES_DIR}')
 
+    _ultimo_reintento_errores = 0  # timestamp de la última recuperación de errores/
+
     while True:
 
         try:
@@ -952,6 +972,26 @@ def _cola_pa_loop():
             _outlook_procesar_in()
         except Exception as e:
             print(f'[COLA-PA][OUTLOOK-FB][ERR] {e}')
+
+        # Recuperar errores/ cada 10 minutos (no solo al arrancar)
+        ahora_loop = time.time()
+        if ahora_loop - _ultimo_reintento_errores >= 600:
+            try:
+                errores_dir = os.path.join(COLA_DIR, 'errores')
+                if os.path.isdir(errores_dir):
+                    recuperados = 0
+                    for f in os.listdir(errores_dir):
+                        if f.lower().endswith('.json'):
+                            src = os.path.join(errores_dir, f)
+                            dst = os.path.join(COLA_IN_DIR, f)
+                            if os.path.isfile(src) and not os.path.exists(dst):
+                                shutil.move(src, dst)
+                                recuperados += 1
+                    if recuperados:
+                        print(f'[COLA-PA] Recuperados {recuperados} archivo(s) de errores/ -> in/ para reintento')
+            except Exception as e:
+                print(f'[COLA-PA][RECOVER-ERR] {e}')
+            _ultimo_reintento_errores = ahora_loop
 
         time.sleep(30)
 
@@ -1199,7 +1239,7 @@ _cache_lock = threading.Lock()
 
 _obj_cache = {'df': None, 'mtime': None, 'ruta': None}
 
-_OBJ_CACHE_VERSION = 'obj_hrbp_v2'
+_OBJ_CACHE_VERSION = 'obj_hrbp_v3'
 
 _filtros_cache = {'key': None, 'data': None}
 
@@ -1234,6 +1274,40 @@ def _nombre_cmp_key(nombre):
     base = re.sub(r'[^A-Z0-9]+', ' ', base)
 
     return re.sub(r'\s+', ' ', base).strip()
+
+
+def _primer_nombre_usil(nombre_completo):
+    """'APELLIDOS, NOMBRES' → primer nombre title-cased. Ej: 'CHANG CHANG, GABRIEL ANDRES' → 'Gabriel'"""
+    if not nombre_completo:
+        return ''
+    nombre = str(nombre_completo).strip()
+    if ',' in nombre:
+        nombres_part = nombre.split(',', 1)[1].strip()
+        tokens = nombres_part.split()
+    else:
+        tokens = nombre.split()
+    return tokens[0].capitalize() if tokens else nombre.title()
+
+
+def _nombre_firma_usil(nombre_completo):
+    """'APELLIDOS, NOMBRES' → 'Primer Nombre Primer Apellido'. Ej: 'JARA ORTIZ, CARLOS HUMBERTO' → 'Carlos Jara'"""
+    if not nombre_completo:
+        return ''
+    nombre = str(nombre_completo).strip()
+    if ',' in nombre:
+        partes = nombre.split(',', 1)
+        apellidos_tokens = partes[0].strip().split()
+        nombres_tokens = partes[1].strip().split()
+        primer_apellido = apellidos_tokens[0].capitalize() if apellidos_tokens else ''
+        primer_nombre = nombres_tokens[0].capitalize() if nombres_tokens else ''
+        if primer_nombre and primer_apellido:
+            return f'{primer_nombre} {primer_apellido}'
+        return (primer_nombre or primer_apellido or nombre).title()
+    else:
+        tokens = nombre.split()
+        if len(tokens) >= 2:
+            return f'{tokens[0].capitalize()} {tokens[1].capitalize()}'
+        return nombre.title()
 
 
 
@@ -4320,7 +4394,7 @@ def cargar_objetivos():
 
     c_restantes  = _to_num('Dias Restante')
 
-    c_gozados    = _to_num('Dias Gozado')     or _to_num('Registrado')
+    c_gozados    = _to_num('Dias Gozado')     or _to_num('Registrad')
 
     c_cumpl      = _to_num('Cumplimiento')    or _to_num('Meta%')
 
@@ -4657,7 +4731,7 @@ def _enriquecer_alertas_con_objetivos(alertas, obj_lookup):
 
         item = dict(p)
 
-        for k in ('nombre', 'area', 'puesto', 'hrbp', 'supervisor', 'fecha_ingreso', 'truncas', 'pendientes', 'vencidas', 'total_vacaciones', 'cantidad_pendiente', 'objetivo', 'comentario'):
+        for k in ('nombre', 'area', 'puesto', 'hrbp', 'supervisor', 'fecha_ingreso', 'truncas', 'pendientes', 'vencidas', 'total_vacaciones', 'cantidad_pendiente', 'objetivo', 'gozados', 'comentario'):
 
             if obj.get(k) not in (None, ''):
 
@@ -6158,6 +6232,60 @@ def api_personas_autocomplete():
 
 
 
+
+
+@app.route('/api/hrbp/config', methods=['GET'])
+def api_hrbp_config_get():
+    """Devuelve HRBPs disponibles, asignación por área y áreas detectadas del Excel."""
+    hrbp_disponibles = list(_PA_CONFIG.get('hrbp_disponibles', []))
+    hrbp_asignacion  = dict(_PA_CONFIG.get('hrbp_asignacion', {}))
+
+    # Auto-detectar HRBPs únicos desde la tabla maestra (columna BP/Business Partner/HRBP)
+    areas_cfg = sorted(set(
+        list(_PA_CONFIG.get('vacaciones_seccion_supervisor', {}).keys()) +
+        list(_PA_CONFIG.get('vacaciones_area_supervisor', {}).keys())
+    ))
+    try:
+        df, _ = cargar_datos()
+        if df is not None and not df.empty:
+            # Detectar áreas
+            col_area = next((c for c in df.columns if c.lower() in ('area', 'área', 'division', 'división', 'gerencia')), None)
+            if not col_area:
+                col_area = next((c for c in df.columns if 'area' in c.lower()), None)
+            if col_area:
+                areas_dato = [str(v).strip().upper() for v in df[col_area].dropna().unique() if str(v).strip()]
+                areas_cfg = sorted(set(areas_cfg + areas_dato))
+    except Exception:
+        pass
+
+    # Incluir BPs canónicos del sistema; excluir a Gabriel Chang (no es del equipo TyC activo)
+    # y evitar duplicar a Carlos Jara (ya está como JARA ORTIZ, CARLOS HUMBERTO)
+    _EXCLUIR_BP = {'GABRIEL CHANG'}
+    try:
+        for _toks, _nombre in _BP_CANON:
+            if not _nombre:
+                continue
+            if _nombre.upper() in _EXCLUIR_BP:
+                continue
+            if _nombre not in hrbp_disponibles:
+                hrbp_disponibles.append(_nombre)
+    except Exception:
+        pass
+
+    return jsonify({'ok': True, 'hrbp_disponibles': hrbp_disponibles,
+                    'hrbp_asignacion': hrbp_asignacion, 'areas': areas_cfg})
+
+
+@app.route('/api/hrbp/config', methods=['POST'])
+def api_hrbp_config_save():
+    """Guarda la asignación de HRBPs por área en pa_config."""
+    payload = request.get_json(silent=True) or {}
+    hrbp_disponibles = [str(h).strip() for h in payload.get('hrbp_disponibles', []) if str(h).strip()]
+    hrbp_asignacion  = {str(k).strip(): str(v).strip()
+                        for k, v in (payload.get('hrbp_asignacion') or {}).items()
+                        if str(k).strip() and str(v).strip()}
+    _guardar_pa_config({'hrbp_disponibles': hrbp_disponibles, 'hrbp_asignacion': hrbp_asignacion})
+    return jsonify({'ok': True, 'guardado': len(hrbp_asignacion)})
 
 
 @app.route('/api/smtp/test', methods=['POST'])
@@ -8113,6 +8241,25 @@ def _buscar_hrbp_destinatario(equipo_full, nombre_objetivo='', fallback=''):
     return str(fallback or '').strip()
 
 
+def _resolver_hrbp_area_override(equipo_full, hrbp_fallback=''):
+    """Retorna el HRBP configurado manualmente para el área dominante del equipo.
+    Si no hay override configurado, devuelve hrbp_fallback."""
+    asignacion = _PA_CONFIG.get('hrbp_asignacion', {})
+    if not asignacion:
+        return hrbp_fallback
+    area_count = {}
+    for p in (equipo_full or []):
+        area = str(p.get('area', '') or p.get('division', '') or '').strip().upper()
+        if area:
+            area_count[area] = area_count.get(area, 0) + 1
+    if not area_count:
+        return hrbp_fallback
+    area_principal = max(area_count, key=area_count.get)
+    for k, v in asignacion.items():
+        if k.strip().upper() == area_principal:
+            return str(v).strip() if v else hrbp_fallback
+    return hrbp_fallback
+
 
 
 
@@ -9279,11 +9426,13 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
 
         try:
 
-            return round(float(v or 0), 1)
+            f = round(float(v or 0), 1)
+
+            return int(f) if f == int(f) else f
 
         except Exception:
 
-            return 0.0
+            return 0
 
 
 
@@ -9426,9 +9575,11 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
         # Si todos los tokens del nombre informal están contenidos en el nombre formal, usar el formal
         if all(tok in _key_default for tok in _key_display.split() if len(tok) > 2):
             hrbp_display = _HRBP_TYC_DEFAULT
+    # Simplificar firma: "JARA ORTIZ, CARLOS HUMBERTO" → "Carlos Jara"
+    hrbp_display = _nombre_firma_usil(hrbp_display) or hrbp_display
 
-    # El saludo siempre va dirigido al JEFE, no al colaborador objetivo
-    nombre_destinatario = str(nombre_jefe or '').strip()
+    # El saludo siempre va dirigido al JEFE, solo usamos su primer nombre
+    nombre_destinatario = _primer_nombre_usil(nombre_jefe) or str(nombre_jefe or '').strip()
 
     ctx = {
 
@@ -9484,22 +9635,39 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
             msg_tpl, count=1
         )
 
-    msg_rendered = _render_texto_editable_html(msg_tpl)
+    # Separar cuerpo del mensaje de la firma/importante
+    corte_idx = -1
+    marcadores = [
+        '<span style="color:#b91c1c">',
+        '<span style="color: #b91c1c">',
+        '<b>Importante:</b>',
+        'Importante:',
+        'Atentamente,',
+        'Atentamente:',
+        'atentamente,'
+    ]
+    for m in marcadores:
+        idx = msg_tpl.find(m)
+        if idx != -1:
+            if corte_idx == -1 or idx < corte_idx:
+                corte_idx = idx
 
-    saludo_html = '' if _mensaje_ya_incluye_saludo(msg_tpl) else f'<p style="font-size:15px;color:#333">Hola, <strong>{nombre_destinatario}</strong></p>'
+    if corte_idx != -1:
+        msg_body_tpl = msg_tpl[:corte_idx].strip()
+        msg_footer_tpl = msg_tpl[corte_idx:].strip()
+    else:
+        msg_body_tpl = msg_tpl.strip()
+        msg_footer_tpl = ''
 
+    # Asegurar saludo al inicio si no está
+    if not _mensaje_ya_incluye_saludo(msg_body_tpl):
+        msg_body_tpl = f'Hola, <strong>{nombre_destinatario}</strong>:\n\n' + msg_body_tpl
 
+    msg_body_rendered = _render_texto_editable_html(msg_body_tpl)
+    msg_footer_rendered = _render_texto_editable_html(msg_footer_tpl)
 
-
-
-    # Intro breve antes de la tabla (saludo + contexto en 2 líneas)
-    intro_html = (
-        f'<p style="font-size:14px;color:#333;margin:0 0 4px 0">Hola, <strong>{nombre_destinatario}</strong>:</p>'
-        f'<p style="font-size:13px;color:#555;margin:0 0 10px 0">'
-        f'Desde la Subgerencia de Talento y Cultura compartimos el reporte de vacaciones '
-        f'de las personas a tu cargo para el trimestre <strong>{campania.get("trimestre", "vigente")}</strong>. '
-        f'Encuentra el detalle completo a continuación.</p>'
-    )
+    body_content_html = f'<div style="font-size:13px;color:#444;line-height:1.6;margin-bottom:12px">{msg_body_rendered}</div>'
+    footer_content_html = f'<div style="font-size:13px;color:#444;line-height:1.6;margin-top:18px">{msg_footer_rendered}</div>' if msg_footer_rendered else ''
 
     return ('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>'
 
@@ -9507,7 +9675,7 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
 
             '<div style="max-width:960px;margin:20px auto;background:#fff;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,.1);padding:24px 28px">'
 
-            + intro_html +
+            + body_content_html +
 
             '<div style="margin:10px 0 0 0;padding:10px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe">'
 
@@ -9525,15 +9693,17 @@ def _build_html_jefe(nombre_jefe, ret_list, prox_list, sc_list, fecha_str, plant
 
             + secs +
 
-            f'<div style="font-size:13px;color:#444;margin-top:18px;line-height:1.6">{msg_rendered}</div>'
-
             '<div style="margin-top:14px;padding:12px;background:#fff7ed;border-radius:8px;border:1px solid #fed7aa">'
 
             f'<p style="margin:0 0 5px 0;color:#9a3412;font-size:12px"><strong>Aviso:</strong> {_tpl(aviso_final, ctx)}</p>'
 
             f'<p style="margin:0;color:#9a3412;font-size:12px"><strong>Recomendacion:</strong> {_tpl(reco_final, ctx)}</p>'
 
-            '</div><div style="margin-top:22px;padding:14px;background:#f0f9ff;border-radius:8px;border:1px solid #bae6fd">'
+            '</div>'
+
+            + footer_content_html +
+
+            '<div style="margin-top:22px;padding:14px;background:#f0f9ff;border-radius:8px;border:1px solid #bae6fd">'
 
             f'<p style="margin:0;color:#0369a1;font-size:12px">Generado automaticamente por People Analytics USIL - {fecha_str}</p>'
 
@@ -10035,7 +10205,7 @@ def api_test_notif():
 
                 continue
 
-            for k in ('nombre', 'area', 'puesto', 'hrbp', 'supervisor', 'fecha_ingreso', 'objetivo', 'truncas', 'pendientes', 'vencidas', 'total_vacaciones', 'cantidad_pendiente', 'comentario'):
+            for k in ('nombre', 'area', 'puesto', 'hrbp', 'supervisor', 'fecha_ingreso', 'objetivo', 'gozados', 'truncas', 'pendientes', 'vencidas', 'total_vacaciones', 'cantidad_pendiente', 'comentario'):
 
                 if obj.get(k) not in (None, ''):
 
@@ -12081,7 +12251,7 @@ def _armar_contenido_supervisor(nombre, email='', dias=30, plantilla_override=No
 
         if obj:
 
-            for k in ('nombre', 'area', 'puesto', 'hrbp', 'supervisor', 'fecha_ingreso', 'objetivo', 'truncas', 'pendientes', 'vencidas', 'total_vacaciones', 'cantidad_pendiente', 'comentario'):
+            for k in ('nombre', 'area', 'puesto', 'hrbp', 'supervisor', 'fecha_ingreso', 'objetivo', 'gozados', 'truncas', 'pendientes', 'vencidas', 'total_vacaciones', 'cantidad_pendiente', 'comentario'):
 
                 if obj.get(k) not in (None, ''):
 
@@ -12246,7 +12416,10 @@ def _armar_contenido_supervisor(nombre, email='', dias=30, plantilla_override=No
 
     # Extraer el HRBP del destinatario objetivo cuando exista; si no, usar el primero válido del equipo.
 
-    _hrbp_nombre = hrbp_destinatario
+    # Prioridad: override manual por área > HRBP del dato > default T&C
+    _hrbp_nombre = (_resolver_hrbp_area_override(equipo_full, '') or
+                    hrbp_destinatario or
+                    _HRBP_TYC_DEFAULT)
 
     _fecha_limite = _PA_CONFIG.get('vacaciones_fecha_limite_gestion', 'la fecha acordada')
 
@@ -12330,7 +12503,9 @@ def _armar_contenido_supervisor(nombre, email='', dias=30, plantilla_override=No
 
         'email_jefe': email_destino_final,
 
-        'email_destino_real': email_destino_real,
+        'email_destino_real': email_destino_final,
+
+        'email_supervisor_real': email_destino_real,
 
         'modo_prueba': modo_prueba,
 
@@ -12631,7 +12806,7 @@ def _obtener_estado_colaborador(query):
 
     if obj:
 
-        for k in ('nombre', 'area', 'puesto', 'hrbp', 'supervisor', 'fecha_ingreso', 'objetivo', 'truncas', 'pendientes', 'vencidas', 'total_vacaciones', 'cantidad_pendiente'):
+        for k in ('nombre', 'area', 'puesto', 'hrbp', 'supervisor', 'fecha_ingreso', 'objetivo', 'gozados', 'truncas', 'pendientes', 'vencidas', 'total_vacaciones', 'cantidad_pendiente'):
 
             if obj.get(k) not in (None, ''):
 

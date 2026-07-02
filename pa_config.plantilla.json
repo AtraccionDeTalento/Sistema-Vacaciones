@@ -1,0 +1,49 @@
+{
+  "_nota": "Copia este archivo como pa_config.json y completa los campos marcados con TODO.",
+  "teams_webhook_url": "",
+  "teams_webhook_personal_url": "",
+  "power_automate_url": "",
+  "teams_sender_email": "TODO@usil.edu.pe",
+  "smtp_email": "TODO@usil.edu.pe",
+  "smtp_password": "TODO_contraseña_de_aplicacion",
+  "encolar_alertas_pa": true,
+  "alertas_cola_dir": "TODO_ruta_a_alertas_cola",
+  "scheduler_activo": false,
+  "teams_testing_mode": false,
+  "teams_allowlist": [],
+  "email_blocklist": [],
+  "bp_emails": "",
+  "supervisores_emails": {},
+  "supervisores_config": {},
+  "vacaciones_test_email": "TODO@usil.edu.pe",
+  "vacaciones_fecha_limite_gestion": "15 de julio de 2026",
+  "vacaciones_seccion_supervisor": {
+    "REMUNERACIONES Y ADM DE PERSONAL": "LOLI PICON, CARMEN",
+    "COMPENSACIONES Y PRESUPUESTO": "LOLI PICON, CARMEN",
+    "ACREDITACION Y LICENCIAMIENTO": "LOLI PICON, CARMEN",
+    "SEGURIDAD Y SALUD OCUPACIONAL": "TORRES MANYARI, CARLOS JESUS",
+    "BIENESTAR SOCIAL": "TORRES MANYARI, CARLOS JESUS",
+    "CULTURA Y CLIMA": "TORRES MANYARI, CARLOS JESUS",
+    "ATRACCION DEL TALENTO": "VASQUEZ ROSAS, ROSARIO RAQUEL AURORA",
+    "GESTION DEL TALENTO": "SUAREZ VERA, NANCY MERCEDES VICTORIA"
+  },
+  "vacaciones_area_supervisor": {
+    "SUBGERENCIA DE GESTION HUMANA": "LOLI PICON, CARMEN",
+    "SUBGERENCIA DE CULTURA Y BENEFICIOS": "TORRES MANYARI, CARLOS JESUS",
+    "SUBGERENCIA DE TALENTO Y CULTURA": "REYES SANEZ, CESAR AUGUSTO",
+    "ATRACCION DEL TALENTO": "VASQUEZ ROSAS, ROSARIO RAQUEL AURORA",
+    "GESTION DEL TALENTO": "SUAREZ VERA, NANCY MERCEDES VICTORIA"
+  },
+  "vacaciones_demo_jefe_enabled": false,
+  "vacaciones_trimestre_actual": "",
+  "vacaciones_limitar_tyc": false,
+  "vacaciones_hrbp_tyc_nombre": "JARA ORTIZ, CARLOS HUMBERTO",
+  "hrbp_disponibles": ["Carlos Jara", "César Reyes", "Fatima Salazar", "Lesley Reyes", "Melissa Higa"],
+  "hrbp_asignacion": {},
+  "sharepoint": {
+    "tenantId": "",
+    "clientId": "",
+    "clientSecret": "",
+    "siteId": ""
+  }
+}

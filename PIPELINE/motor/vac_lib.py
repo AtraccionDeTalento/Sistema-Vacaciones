@@ -20,9 +20,22 @@ def cargar_config(ruta=None):
     return cfg
 
 def ruta_abs(rel):
-    """Resuelve una ruta relativa respecto a la carpeta PIPELINE."""
+    """Resuelve una ruta relativa respecto a la carpeta PIPELINE.
+    Si no existe y estamos dentro de dist_electron, intenta buscar en el area de desarrollo (carpeta principal)."""
     p = Path(rel)
-    return p if p.is_absolute() else (RAIZ / p)
+    if p.is_absolute():
+        return p
+    res = RAIZ / p
+    if res.exists():
+        return res
+    if "dist_electron" in str(RAIZ):
+        curr = RAIZ
+        for _ in range(4):
+            parent_pipeline = curr / "PIPELINE"
+            if parent_pipeline.is_dir() and (parent_pipeline / p).exists():
+                return parent_pipeline / p
+            curr = curr.parent
+    return res
 
 # ---------------------------------------------------------------- normalizacion
 def normalizar(s):

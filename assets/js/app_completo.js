@@ -301,7 +301,7 @@ function updateMassGuardHint() {
 function getSelectedMassChannels() {
   return {
     enviar_teams: true,
-    enviar_smtp: true,   // Activado por defecto — el servidor fuerza modo prueba si vacaciones_test_email está configurado
+    enviar_smtp: false,  // Desactivado por defecto para usar la cola de Power Automate (remitente talento)
     encolar_pa: true,
   };
 }
@@ -309,7 +309,7 @@ function getSelectedMassChannels() {
 function getSelectedIndividualChannels() {
   return {
     enviar_teams: true,
-    enviar_smtp: true,   // Activado por defecto — modo prueba activo via pa_config.json
+    enviar_smtp: false,  // Desactivado por defecto para usar la cola de Power Automate (remitente talento)
     encolar_para_pa: true,
   };
 }
@@ -660,9 +660,136 @@ async function enviarColaSmtpDirecto() {
 document.addEventListener('click', e => {
   const modal = document.getElementById('modalSmtp');
   if (modal && e.target === modal) cerrarModalSmtp();
+  const modalH = document.getElementById('modalHrbp');
+  if (modalH && e.target === modalH) cerrarModalHrbp();
 });
 
 // ─── fin SMTP modal ───────────────────────────────────────────────────────────
+
+// ─── HRBP por área modal ──────────────────────────────────────────────────────
+let _hrbpData = { hrbp_disponibles: [], hrbp_asignacion: {}, areas: [] };
+
+function _hrbpBanner(msg, tipo) {
+  const el = document.getElementById('hrbpStatusBanner');
+  if (!el) return;
+  el.style.display = 'block';
+  const colores = { ok: '#d1fae5;color:#065f46', err: '#fee2e2;color:#991b1b', warn: '#fef3c7;color:#92400e' };
+  const c = colores[tipo] || colores.warn;
+  el.style.cssText += `;background:${c.split(';')[0].replace('background:','')};color:${c.split('color:')[1]}`;
+  el.style.background = c.split(';')[0];
+  el.style.color = c.split('color:')[1];
+  el.textContent = msg;
+}
+
+async function abrirModalHrbp() {
+  const modal = document.getElementById('modalHrbp');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  document.getElementById('hrbpStatusBanner').style.display = 'none';
+  try {
+    const d = await jfetch('/api/hrbp/config');
+    _hrbpData = d;
+    _renderHrbpDisponibles();
+    _renderHrbpTabla();
+  } catch (e) {
+    _hrbpBanner('❌ Error al cargar configuración: ' + e.message, 'err');
+  }
+}
+
+function cerrarModalHrbp() {
+  const modal = document.getElementById('modalHrbp');
+  if (modal) modal.style.display = 'none';
+}
+
+function _renderHrbpDisponibles() {
+  const cont = document.getElementById('listaHrbpDisponibles');
+  if (!cont) return;
+  cont.innerHTML = '';
+  (_hrbpData.hrbp_disponibles || []).forEach((h, i) => {
+    const chip = document.createElement('span');
+    chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;background:#ede9fe;color:#5b21b6;font-size:11px;font-weight:600';
+    chip.innerHTML = `${h} <button onclick="_eliminarHrbp(${i})" style="background:none;border:none;cursor:pointer;color:#7c3aed;font-size:12px;line-height:1;padding:0 2px" title="Eliminar">✕</button>`;
+    cont.appendChild(chip);
+  });
+}
+
+function _renderHrbpTabla() {
+  const tbody = document.getElementById('tbodyHrbp');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const areas = _hrbpData.areas || [];
+  const asignacion = _hrbpData.hrbp_asignacion || {};
+  const disponibles = _hrbpData.hrbp_disponibles || [];
+  const opciones = disponibles.map(h => `<option value="${h}">${h}</option>`).join('');
+  areas.forEach(area => {
+    const val = asignacion[area] || asignacion[area.toUpperCase()] || '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="padding:5px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#374151">${area}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #f3f4f6">
+        <select data-area="${area}" onchange="_onHrbpSelect(this)"
+          style="width:100%;font-size:11px;padding:3px 6px;border:1.5px solid #d1d5db;border-radius:4px">
+          <option value="">— Sin asignar —</option>
+          ${opciones}
+        </select>
+      </td>`;
+    tbody.appendChild(tr);
+    const sel = tr.querySelector('select');
+    if (val) sel.value = val;
+  });
+}
+
+function _onHrbpSelect(sel) {
+  const area = sel.dataset.area;
+  if (!_hrbpData.hrbp_asignacion) _hrbpData.hrbp_asignacion = {};
+  if (sel.value) _hrbpData.hrbp_asignacion[area] = sel.value;
+  else delete _hrbpData.hrbp_asignacion[area];
+}
+
+function _eliminarHrbp(idx) {
+  const nombre = _hrbpData.hrbp_disponibles[idx];
+  if (!confirm(`¿Eliminar "${nombre}" de la lista de HRBPs?`)) return;
+  _hrbpData.hrbp_disponibles.splice(idx, 1);
+  // Si algún área lo tenía asignado, limpiarlo
+  Object.keys(_hrbpData.hrbp_asignacion || {}).forEach(k => {
+    if (_hrbpData.hrbp_asignacion[k] === nombre) delete _hrbpData.hrbp_asignacion[k];
+  });
+  _renderHrbpDisponibles();
+  _renderHrbpTabla();
+}
+
+function agregarHrbp() {
+  const nombre = prompt('Nombre completo del HRBP (en mayúsculas, ej: GARCIA RIOS, MELISSA):');
+  if (!nombre || !nombre.trim()) return;
+  const n = nombre.trim().toUpperCase();
+  if (_hrbpData.hrbp_disponibles.includes(n)) { alert('Ya está en la lista.'); return; }
+  _hrbpData.hrbp_disponibles.push(n);
+  _renderHrbpDisponibles();
+  _renderHrbpTabla();
+}
+
+async function guardarHrbpConfig() {
+  _hrbpBanner('⏳ Guardando…', 'warn');
+  try {
+    const d = await jfetch('/api/hrbp/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        hrbp_disponibles: _hrbpData.hrbp_disponibles,
+        hrbp_asignacion: _hrbpData.hrbp_asignacion
+      })
+    });
+    if (d.ok) {
+      _hrbpBanner(`✅ Guardado — ${d.guardado} área(s) asignada(s)`, 'ok');
+      setTimeout(cerrarModalHrbp, 1200);
+    } else {
+      _hrbpBanner('❌ ' + (d.error || 'Error al guardar'), 'err');
+    }
+  } catch (e) {
+    _hrbpBanner('❌ ' + e.message, 'err');
+  }
+}
+// ─── fin HRBP modal ───────────────────────────────────────────────────────────
 
 async function cancelarUltimoPendiente() {
   await refreshQueueState();

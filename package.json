@@ -73,8 +73,7 @@
           "!PIPELINE/SUBIDOS/**",
           "!PIPELINE/DATOS ACTUALIZADOS/**",
           "!PIPELINE/bot_adryan/logs/**",
-          "!PIPELINE/RESPALDOS/**",
-          "!PIPELINE/*.xlsx"
+          "!PIPELINE/RESPALDOS/**"
         ]
       }
     ]

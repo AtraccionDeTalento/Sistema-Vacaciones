@@ -157,20 +157,52 @@ def sanitizar_maestro(ruta_xlsx: str) -> str:
     wb = openpyxl.load_workbook(ruta_xlsx)
     ws = wb[wb.sheetnames[0]]
 
-    # 1) Eliminar los 3 primeros registros de data (filas 12, 13, 14)
-    for i in range(FILAS_DUENOS):
-        ws.delete_rows(FILA_DATA_INICIO)
-    log(f"  Eliminados {FILAS_DUENOS} registros de dueños.")
+    # Leer todas las filas en memoria para procesarlas rápidamente
+    all_rows = []
+    for row in ws.iter_rows(values_only=True):
+        all_rows.append(row)
+
+    # El encabezado está en la fila 11 (índice 10)
+    # Los datos comienzan en la fila 12 (índice 11)
+    metadata_and_header = all_rows[:FILA_HEADER] # 11 filas (0 a 10)
+    data_rows = all_rows[FILA_HEADER:]          # Desde fila 12 (índice 11)
+
+    # 1) Eliminar los 3 primeros registros de data
+    filtered_data_rows = data_rows[FILAS_DUENOS:]
+    log(f"  Eliminados {FILAS_DUENOS} registros de dueños (en memoria).")
 
     # 2) Sustituir todos los emails por el email seguro
-    col_idx = COL_EMAIL + 1  # openpyxl usa 1-based
     emails_reemplazados = 0
-    for row in ws.iter_rows(min_row=FILA_DATA_INICIO, min_col=col_idx, max_col=col_idx):
-        cell = row[0]
-        if cell.value and "@" in str(cell.value):
-            cell.value = EMAIL_SEGURO
-            emails_reemplazados += 1
+    sanitized_data = []
+    for row in filtered_data_rows:
+        if not row:
+            continue
+        row_list = list(row)
+        if len(row_list) > COL_EMAIL:
+            val = row_list[COL_EMAIL]
+            if val and "@" in str(val):
+                row_list[COL_EMAIL] = EMAIL_SEGURO
+                emails_reemplazados += 1
+        sanitized_data.append(row_list)
     log(f"  Emails reemplazados: {emails_reemplazados} -> {EMAIL_SEGURO}")
+
+    # Recrear la hoja para evitar la lentitud extrema de delete_rows
+    sheet_title = ws.title
+    new_ws = wb.create_sheet(title="SanitizadoTemp")
+
+    # Escribir cabecera y metadata
+    for r_idx, row_val in enumerate(metadata_and_header, start=1):
+        for c_idx, val in enumerate(row_val, start=1):
+            new_ws.cell(row=r_idx, column=c_idx, value=val)
+
+    # Escribir filas de datos sanitizadas
+    for r_idx, row_val in enumerate(sanitized_data, start=FILA_DATA_INICIO):
+        for c_idx, val in enumerate(row_val, start=1):
+            new_ws.cell(row=r_idx, column=c_idx, value=val)
+
+    # Eliminar hoja antigua y renombrar la nueva
+    wb.remove(ws)
+    new_ws.title = sheet_title
 
     # Guardar
     sanitizado = ruta_xlsx.replace(".xlsx", "_sanitizado.xlsx")
