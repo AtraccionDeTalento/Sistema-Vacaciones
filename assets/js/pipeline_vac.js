@@ -6,7 +6,7 @@
 (function () {
   'use strict';
   function $(id) { return document.getElementById(id); }
-  var pollTimer = null, jobId = null, antes = null;
+  var pollTimer = null, jobId = null, antes = null, _ultimaOpAdryan = null;
 
   function fmtPct(v) {
     if (v === null || v === undefined || isNaN(v)) return '—';
@@ -125,6 +125,7 @@
   }
   function run() { startRun(null); }       // metodo 1: ultimo de Descargas
   function runAdryan() {                    // metodo 0: el bot descarga de Adryan y luego procesa
+    _ultimaOpAdryan = 'adryan';
     var fd = new FormData();
     fd.append('descargar', '1');
     var fi = $('pipeFechaInicio'), ft = $('pipeFechaTermino');
@@ -139,6 +140,7 @@
     startRun(fd);
   }
   function runMaestro() {
+    _ultimaOpAdryan = 'maestro';
     setBusy(true);
     if ($('pipeReload')) $('pipeReload').classList.add('hidden');
     setBar(3, false); setStep('Iniciando descarga de maestro…');
@@ -184,7 +186,12 @@
         if (j.estado === 'done') { clearInterval(pollTimer); pollTimer = null; done(j); }
         else if (j.estado === 'error') {
           clearInterval(pollTimer); pollTimer = null;
-          fail((j.lineas && j.lineas.slice(-3).join(' · ')) || j.error || 'Error en el proceso');
+          if (j.necesita_password_adryan) {
+            setBusy(false);
+            mostrarModalPasswordAdryan();
+          } else {
+            fail((j.lineas && j.lineas.slice(-3).join(' · ')) || j.error || 'Error en el proceso');
+          }
         }
       })
       .catch(function () {});
@@ -243,6 +250,68 @@
         }
       })
       .catch(function(e) { setStep('❌ ' + e); if (rs) rs.disabled = false; });
+  }
+
+  // ── Modal contraseña Adryan ─────────────────────────────────────────────────
+  function mostrarModalPasswordAdryan() {
+    var existente = document.getElementById('_modalPwAdryan');
+    if (existente) existente.remove();
+    var modal = document.createElement('div');
+    modal.id = '_modalPwAdryan';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center';
+    modal.innerHTML = [
+      '<div style="background:#fff;border-radius:14px;padding:28px 32px;max-width:400px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,.18)">',
+      '  <div style="font-size:28px;text-align:center;margin-bottom:8px">🔑</div>',
+      '  <h3 style="margin:0 0 6px;font-size:17px;color:#1e293b;text-align:center">Contraseña de Adryan requerida</h3>',
+      '  <p style="margin:0 0 16px;font-size:13px;color:#64748b;text-align:center">La contraseña no está guardada en este equipo.<br>Ingrésala una vez y se guardará de forma segura.</p>',
+      '  <input id="_pwAdryanInput" type="password" placeholder="Contraseña de Adryan" autocomplete="current-password"',
+      '    style="width:100%;padding:10px 12px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box;margin-bottom:14px">',
+      '  <div id="_pwAdryanError" style="color:#dc2626;font-size:12px;margin-bottom:10px;display:none"></div>',
+      '  <div style="display:flex;gap:10px;justify-content:flex-end">',
+      '    <button id="_pwAdryanCancelar" style="padding:8px 16px;border:1.5px solid #cbd5e1;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:13px">Cancelar</button>',
+      '    <button id="_pwAdryanGuardar" style="padding:8px 18px;background:#2563eb;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600">Guardar y reintentar</button>',
+      '  </div>',
+      '</div>'
+    ].join('');
+    document.body.appendChild(modal);
+
+    var inp = document.getElementById('_pwAdryanInput');
+    var errDiv = document.getElementById('_pwAdryanError');
+    inp.focus();
+
+    document.getElementById('_pwAdryanCancelar').onclick = function() { modal.remove(); setStep('❌ Operación cancelada'); };
+    document.getElementById('_pwAdryanGuardar').onclick = guardarYReintentar;
+    inp.addEventListener('keydown', function(e) { if (e.key === 'Enter') guardarYReintentar(); });
+
+    function guardarYReintentar() {
+      var pw = inp.value.trim();
+      if (!pw) { errDiv.textContent = 'Ingresa la contraseña'; errDiv.style.display = ''; return; }
+      var btn = document.getElementById('_pwAdryanGuardar');
+      btn.disabled = true; btn.textContent = 'Guardando...';
+      fetch('/api/adryan/guardar-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw })
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+          if (!res.ok) {
+            errDiv.textContent = 'Error: ' + (res.error || 'no se pudo guardar');
+            errDiv.style.display = '';
+            btn.disabled = false; btn.textContent = 'Guardar y reintentar';
+            return;
+          }
+          modal.remove();
+          // Reintentar la operación que falló
+          if (_ultimaOpAdryan === 'maestro') runMaestro();
+          else runAdryan();
+        })
+        .catch(function(e) {
+          errDiv.textContent = 'Error de red: ' + e;
+          errDiv.style.display = '';
+          btn.disabled = false; btn.textContent = 'Guardar y reintentar';
+        });
+    }
   }
 
   function wire() {

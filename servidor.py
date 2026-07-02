@@ -14549,6 +14549,10 @@ def _bot_adryan_descargar(job):
             if 'playwright' in lineas_str.lower() or 'No module named' in lineas_str:
                 job['estado'] = 'error'
                 job['error'] = 'Esta funcion requiere playwright, disponible solo en la maquina administrativa. Sube el archivo VACRptMotivo manualmente.'
+            elif 'CryptUnprotectData' in lineas_str or 'no hay contrase' in lineas_str.lower():
+                job['estado'] = 'error'
+                job['error'] = 'NECESITA_PASSWORD_ADRYAN'
+                job['necesita_password_adryan'] = True
             else:
                 job['estado'] = 'error'; job['error'] = 'Fallo la descarga de Adryan (revisa logs del bot).'
             return False
@@ -14688,6 +14692,9 @@ def _pipeline_maestro_worker(job_id):
             lineas_str = ' '.join(job['lineas'])
             if 'playwright' in lineas_str.lower() or 'No module named' in lineas_str:
                 job['error'] = 'Esta funcion requiere playwright, disponible solo en la maquina administrativa.'
+            elif 'CryptUnprotectData' in lineas_str or 'no hay contrase' in lineas_str.lower():
+                job['error'] = 'NECESITA_PASSWORD_ADRYAN'
+                job['necesita_password_adryan'] = True
             else:
                 job['error'] = 'Fallo la descarga del maestro.'
             job['estado'] = 'error'
@@ -14719,6 +14726,25 @@ def api_pipeline_reset():
         _pipeline_corriendo['flag'] = False
     return jsonify({'ok': True, 'estaba_bloqueado': estaba, 'msg': 'Flag de pipeline reseteado.'})
 
+@app.route('/api/adryan/guardar-password', methods=['POST'])
+def api_adryan_guardar_password():
+    """Guarda la contrasena de Adryan cifrada con DPAPI en esta maquina."""
+    datos = request.get_json(silent=True) or {}
+    pw = (datos.get('password') or '').strip()
+    if not pw:
+        return jsonify({'ok': False, 'error': 'Contrasena vacia'}), 400
+    try:
+        import importlib as _importlib
+        _bot_dir = os.path.join(SCRIPT_DIR, 'PIPELINE', 'bot_adryan')
+        if _bot_dir not in sys.path:
+            sys.path.insert(0, _bot_dir)
+        import guardar_password as _gp
+        _importlib.reload(_gp)
+        _gp.guardar(pw)
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
 @app.route('/api/vacaciones/pipeline/estado/<job_id>', methods=['GET'])
 def api_pipeline_estado(job_id):
     """Progreso en vivo + KPIs antes/despues."""
@@ -14735,6 +14761,7 @@ def api_pipeline_estado(job_id):
         'error': job.get('error'),
         'kpis_antes': job.get('kpis_antes'),
         'kpis_despues': job.get('kpis_despues'),
+        'necesita_password_adryan': job.get('necesita_password_adryan', False),
         'duracion': round((job.get('fin') or time.time()) - job['inicio'], 1),
     })
 
