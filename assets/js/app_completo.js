@@ -1961,7 +1961,11 @@ async function enviarInd(flags) {
     const teamsErrI = flags.enviar_teams && !data.teams_enviado ? ` Teams: ${data.teams_error || 'sin webhook'}` : '';
     setStatus(`⚠️ Envío para ${nombre} con advertencias.${teamsErrI}${pruebaTxt}`);
   }
-  notify(`Mensaje enviado para ${nombre}. Se procesa en ${delay}s (${infoFile}).`, 'ok');
+  if (paOkI) {
+    notify(`Mensaje encolado para ${nombre}. Se procesará en ${delay}s (${infoFile}).`, 'warn', 4000);
+  } else {
+    notify(`Mensaje enviado para ${nombre} via SMTP/Teams.`, 'ok');
+  }
   await Promise.allSettled([refreshQueueState(), refreshConfirmacionesResumen()]);
   log('Envio individual', data);
 }
@@ -3074,7 +3078,11 @@ async function enviarSupervisorSeleccionado(nombreSupervisor, flags) {
     const teamsErr = payload.enviar_teams && !data.teams_enviado ? ` Teams: ${data.teams_error || 'sin webhook'}` : '';
     setStatus(`⚠️ Envío para ${payload.nombre} con advertencias.${teamsErr}`);
   }
-  notify(`Mensaje enviado para ${payload.nombre}. Se procesa en ${delay}s (${infoFile}).`, 'ok');
+  if (paOk) {
+    notify(`Mensaje encolado para ${payload.nombre}. Se procesará en ${delay}s (${infoFile}).`, 'warn', 4000);
+  } else {
+    notify(`Mensaje enviado exitosamente para ${payload.nombre}.`, 'ok');
+  }
   return data;
 }
 
@@ -3121,7 +3129,11 @@ async function enviarPersonaObjetivoSeleccionada(row, flags) {
     const teamsErr2 = payload.enviar_teams && !data.teams_enviado ? ` Teams: ${data.teams_error || 'sin webhook'}` : '';
     setStatus(`⚠️ Envío para ${nombrePersona} con advertencias.${teamsErr2}`);
   }
-  notify(`Mensaje enviado para ${nombrePersona}. Se procesa en ${delay}s (${infoFile}).`, 'ok');
+  if (paOk2) {
+    notify(`Mensaje encolado para ${nombrePersona}. Se procesará en ${delay}s (${infoFile}).`, 'warn', 4000);
+  } else {
+    notify(`Mensaje enviado exitosamente para ${nombrePersona}.`, 'ok');
+  }
   return data;
 }
 

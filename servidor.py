@@ -13386,9 +13386,6 @@ def api_enviar_a_supervisor():
 
     encolar_pa = _cfg_bool(payload.get('encolar_para_pa', _ENCOLAR_ALERTAS_PA), _ENCOLAR_ALERTAS_PA)
 
-    if enviar_teams:
-
-        encolar_pa = True
 
     if not enviar_smtp and not encolar_pa and not enviar_teams:
 
