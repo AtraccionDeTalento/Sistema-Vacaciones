@@ -300,7 +300,7 @@ function updateMassGuardHint() {
 
 function getSelectedMassChannels() {
   return {
-    enviar_teams: true,
+    enviar_teams: false, // Apagar Teams permanentemente
     enviar_smtp: true,  // Forzar envío directo por SMTP
     encolar_pa: false,  // Apagar la cola de Power Automate
   };
@@ -308,7 +308,7 @@ function getSelectedMassChannels() {
 
 function getSelectedIndividualChannels() {
   return {
-    enviar_teams: true,
+    enviar_teams: false, // Apagar Teams permanentemente
     enviar_smtp: true,  // Forzar envío directo por SMTP
     encolar_para_pa: false, // Apagar la cola de Power Automate
   };
