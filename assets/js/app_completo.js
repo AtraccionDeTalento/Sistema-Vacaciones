@@ -301,16 +301,16 @@ function updateMassGuardHint() {
 function getSelectedMassChannels() {
   return {
     enviar_teams: false,
-    enviar_smtp: true,  
-    encolar_pa: false,  
+    enviar_smtp: false,  
+    encolar_pa: true,  
   };
 }
 
 function getSelectedIndividualChannels() {
   return {
     enviar_teams: false, 
-    enviar_smtp: true,  
-    encolar_para_pa: false, 
+    enviar_smtp: false,  
+    encolar_para_pa: true, 
   };
 }
 
