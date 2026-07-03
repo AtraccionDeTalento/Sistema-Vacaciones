@@ -1847,14 +1847,18 @@ async function enviarGlobal(flags) {
     const file = data.json_archivo || 'archivo pendiente';
     const paOkM = flags.encolar_pa && data && (data.json_guardado || data.json_archivo);
     const teamsOkM = flags.enviar_teams && data && data.teams_enviado;
+    const smtpOkM = flags.enviar_smtp && data && data.smtp_enviados > 0;
+    
     if (paOkM) {
       setStatus(`✅ Campaña enviada. Correos en camino vía Power Automate (~${delay}s).${teamsOkM ? ' Teams: OK.' : ''}`);
-    } else if (teamsOkM) {
-      setStatus(`✅ Campaña enviada vía Teams.`);
+      notify(`Campaña enviada: ${file}. Seguridad activa (${delay}s).`, 'ok');
+    } else if (smtpOkM || teamsOkM) {
+      setStatus(`✅ Campaña enviada correctamente vía SMTP/Teams.`);
+      notify(`Campaña procesada exitosamente (${data.smtp_enviados || 0} enviados).`, 'ok');
     } else {
-      setStatus(`⚠️ Campaña enviada con advertencias. Revisa la cola PA.`);
+      setStatus(`⚠️ Campaña procesada con errores (SMTP/Teams fallaron). Revisa la consola.`);
+      notify(`Ocurrió un problema al enviar la campaña.`, 'err');
     }
-    notify(`Campaña enviada: ${file}. Seguridad activa (${delay}s).`, 'ok');
   } finally {
     state.massSendInFlight = false;
     wizardEvalSendBtn();
