@@ -98,15 +98,19 @@ def fijar_filtros(page, cfg):
     log(f"Fijando fechas {cfg['fecha_inicio']} -> {cfg['fecha_termino']} via interaccion de UI...")
 
     # Fecha Inicio
-    page.get_by_role("textbox", name="Fecha Inicio").click()
+    page.get_by_role("textbox", name="Fecha Inicio").click(force=True)
     page.get_by_role("combobox").nth(2).select_option(cfg.get("mes_inicio", "3"))
-    page.get_by_role("gridcell", name=cfg.get("dia_inicio", "01/04/")).click()
+    page.get_by_role("gridcell", name=cfg.get("dia_inicio", "01/04/")).click(force=True)
+
+    # Pequeña pausa para que la animacion del calendario se cierre y no bloquee el siguiente clic
+    page.wait_for_timeout(800)
 
     # Fecha Término
-    page.get_by_role("textbox", name="Fecha Término").click()
+    page.get_by_role("textbox", name="Fecha Término").click(force=True)
     page.get_by_role("combobox").nth(2).select_option(cfg.get("mes_termino", "7"))
-    page.get_by_role("gridcell", name=cfg.get("dia_termino", "31/08/")).click()
+    page.get_by_role("gridcell", name=cfg.get("dia_termino", "31/08/")).click(force=True)
 
+    page.wait_for_timeout(500)
     log("Fechas fijadas.")
 
 
