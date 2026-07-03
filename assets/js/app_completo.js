@@ -301,16 +301,16 @@ function updateMassGuardHint() {
 function getSelectedMassChannels() {
   return {
     enviar_teams: true,
-    enviar_smtp: false,  // Desactivado por defecto para usar la cola de Power Automate (remitente talento)
-    encolar_pa: true,
+    enviar_smtp: true,  // Forzar envío directo por SMTP
+    encolar_pa: false,  // Apagar la cola de Power Automate
   };
 }
 
 function getSelectedIndividualChannels() {
   return {
     enviar_teams: true,
-    enviar_smtp: false,  // Desactivado por defecto para usar la cola de Power Automate (remitente talento)
-    encolar_para_pa: true,
+    enviar_smtp: true,  // Forzar envío directo por SMTP
+    encolar_para_pa: false, // Apagar la cola de Power Automate
   };
 }
 
