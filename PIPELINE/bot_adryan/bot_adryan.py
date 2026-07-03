@@ -143,13 +143,17 @@ def buscar_y_descargar(page, cfg) -> str:
     log("Clic en Buscar...")
     page.get_by_role("button", name="Buscar").click()
     page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(3000)  # deja que se pinte la tabla
+    page.wait_for_timeout(8000)  # Adryan puede tardar mas de 5s en pintar la tabla y el boton Excel
 
     log("Descargando reporte...")
     timeout_dl = max(cfg.get("timeout_ms", 60000), 120000)  # minimo 2 minutos
 
     # Intentar varios selectores del boton de descarga Excel
     selectors = [
+        ".buttons-excel",
+        "button:has-text('Excel')",
+        ".btn-export",
+        "[aria-label*='xcel']",
         ".mr-3",
         "button.mr-3",
         "[title*='xcel']",
@@ -220,7 +224,12 @@ def main():
         return 2
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(channel=cfg["canal_navegador"], headless=headless)
+        # Los args evitan que Chrome muestre ventanas fantasma en algunos entornos Windows
+        browser = pw.chromium.launch(
+            channel=cfg["canal_navegador"], 
+            headless=headless,
+            args=["--disable-gpu", "--window-position=-32000,-32000", "--hide-scrollbars"]
+        )
         ctx_args = {"accept_downloads": True}
         if os.path.exists(sesion):
             ctx_args["storage_state"] = sesion
