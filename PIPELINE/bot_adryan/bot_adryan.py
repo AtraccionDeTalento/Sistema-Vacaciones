@@ -99,16 +99,20 @@ def fijar_filtros(page, cfg):
 
     # Fecha Inicio
     page.get_by_role("textbox", name="Fecha Inicio").click(force=True)
-    page.get_by_role("combobox").nth(2).select_option(cfg.get("mes_inicio", "3"))
-    page.get_by_role("gridcell", name=cfg.get("dia_inicio", "01/04/")).click(force=True)
+    
+    # Usar selector robusto enfocado en el calendario actualmente abierto (.picker--opened)
+    calendar_opened = page.locator(".picker--opened")
+    
+    calendar_opened.locator(".picker__select--month").select_option(cfg.get("mes_inicio", "3"))
+    calendar_opened.get_by_role("gridcell", name=cfg.get("dia_inicio", "01/04/")).click(force=True)
 
-    # Pequeña pausa para que la animacion del calendario se cierre y no bloquee el siguiente clic
+    # Pequeña pausa para que la animacion del calendario se cierre
     page.wait_for_timeout(800)
 
     # Fecha Término
     page.get_by_role("textbox", name="Fecha Término").click(force=True)
-    page.get_by_role("combobox").nth(2).select_option(cfg.get("mes_termino", "7"))
-    page.get_by_role("gridcell", name=cfg.get("dia_termino", "31/08/")).click(force=True)
+    calendar_opened.locator(".picker__select--month").select_option(cfg.get("mes_termino", "7"))
+    calendar_opened.get_by_role("gridcell", name=cfg.get("dia_termino", "31/08/")).click(force=True)
 
     page.wait_for_timeout(500)
     log("Fechas fijadas.")
