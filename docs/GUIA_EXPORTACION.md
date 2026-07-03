@@ -107,13 +107,40 @@ En el equipo de destino:
     *   Creará el acceso directo en el escritorio.
 2.  Navegar a la carpeta `PIPELINE/` y ejecutar `INSTALAR_DEPENDENCIAS.bat` para configurar las librerías del pipeline de Excel (especialmente `xlwings` y `pywin32`).
 
-### Paso 4: Empaquetar como instalador EXE (Opcional)
-Si se desea distribuir como un instalador único `.exe`:
-1.  Instalar **Node.js** e **Inno Setup** en el equipo de compilación.
-2.  En la raíz del proyecto, correr:
+### Paso 4: Empaquetar y Distribuir (con Auto-Updater)
+El sistema ahora utiliza `electron-builder` y `electron-updater` para empaquetar y auto-actualizarse.
+
+1.  Instalar **Node.js** en el equipo de compilación.
+2.  En la raíz del proyecto, instalar dependencias:
     ```bash
     npm install
+    ```
+3.  Para compilar el instalador localmente:
+    ```bash
     npm run build
     ```
-    Esto creará el empaquetado de Electron bajo `dist_electron/win-unpacked/`.
-3.  Abrir **Inno Setup Compiler**, cargar el archivo `SISTEMA_VACACIONES_USIL.iss` y compilar. El instalador resultante se guardará en `dist/Instalador_Sistema_Vacaciones_USIL.exe`.
+    Esto creará el empaquetado y el instalador NSIS en `dist_electron/`.
+
+4.  **Para lanzar una nueva actualización del Shell (main.js, package.json):**
+    Si modificas `main.js` o configuraciones nativas de Electron, debes generar una nueva versión y publicarla en GitHub Releases:
+    ```bash
+    npm run release
+    ```
+    *(Nota: El repositorio debe tener configurados los Releases de GitHub, y requerirá permisos si es un repositorio privado).*
+
+---
+
+## 5. Arquitectura de Auto-Actualización Doble
+
+El sistema cuenta con un mecanismo de auto-actualización de dos niveles:
+
+1. **Auto-Update del Shell (Electron Updater)**:
+   * Gestionado por `electron-updater`.
+   * Verifica los **GitHub Releases** del repositorio al iniciar la aplicación.
+   * Descarga el nuevo instalador NSIS en segundo plano si hay cambios estructurales (ej. modificaciones a `main.js`, `package.json` o actualización de la versión de Electron).
+   * Requiere publicar versiones usando `npm run release`.
+
+2. **Auto-Update de Scripts (Motor de Datos)**:
+   * Mecanismo ligero que descarga los scripts de Python y archivos frontend directamente desde la rama `main`.
+   * Actualiza los archivos lógicos de la app (`servidor.py`, `front`, `pipeline`) sin requerir reinstalación.
+   * Se ejecuta de forma silenciosa y transparente para los BPs (Business Partners), garantizando que siempre tengan las últimas reglas de negocio.

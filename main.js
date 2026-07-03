@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const http  = require('http');
 const https = require('https');
 const fs    = require('fs');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
 let pythonProcess;
@@ -264,6 +265,49 @@ async function detectarPython() {
   return null;
 }
 
+// ─── Auto-update del Shell (Electron Updater) ───────────────────────────────
+function checkElectronUpdater() {
+  return new Promise((resolve) => {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
+    
+    autoUpdater.on('error', (err) => {
+      console.log('[ELECTRON-UPDATER] Error:', err);
+      resolve('error');
+    });
+    
+    autoUpdater.on('update-available', (info) => {
+      console.log('[ELECTRON-UPDATER] Actualización disponible:', info.version);
+      uScreen('Actualización de la app encontrada', 'Descargando nueva versión del sistema (puede tomar un momento)...');
+      autoUpdater.downloadUpdate();
+    });
+    
+    autoUpdater.on('update-not-available', (info) => {
+      console.log('[ELECTRON-UPDATER] No hay actualizaciones del shell.');
+      resolve('not-available');
+    });
+    
+    autoUpdater.on('download-progress', (progressObj) => {
+      let percent = Math.round(progressObj.percent);
+      let mb = (progressObj.transferred / 1024 / 1024).toFixed(1);
+      let totalMb = (progressObj.total / 1024 / 1024).toFixed(1);
+      uScreen('Descargando actualización...', `[${percent}%] Descargando nueva versión del sistema... (${mb} MB / ${totalMb} MB)`);
+    });
+    
+    autoUpdater.on('update-downloaded', (info) => {
+      console.log('[ELECTRON-UPDATER] Actualización descargada, instalando...');
+      uScreen('Actualización descargada', 'Instalando actualización y reiniciando...');
+      autoUpdater.quitAndInstall();
+      resolve('quitAndInstall'); // No deberíamos llegar a continuar
+    });
+    
+    autoUpdater.checkForUpdates().catch(err => {
+      console.log('[ELECTRON-UPDATER] Excepción en checkForUpdates:', err);
+      resolve('error');
+    });
+  });
+}
+
 // ─── Setup + arranque del servidor ───────────────────────────────────────────
 async function setupAndStartServer() {
   const baseDir = app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname;
@@ -277,15 +321,28 @@ async function setupAndStartServer() {
   // Crear acceso directo al escritorio (silencioso, solo primera vez)
   if (app.isPackaged) crearAccesoDirecto(baseDir);
 
-  // ── Auto-update ──────────────────────────────────────────────────────────
+  // ── Auto-update Shell ────────────────────────────────────────────────────
+  if (app.isPackaged) {
+    if (mainWindow) mainWindow.loadURL(loadingPage('Buscando actualizaciones del sistema...', 'Verificando si hay una versión nueva de la aplicación...'));
+    try {
+      const updateResult = await checkElectronUpdater();
+      if (updateResult === 'quitAndInstall') {
+        return; // Detener flujo para permitir que se cierre y actualice
+      }
+    } catch (e) {
+      console.log('[ELECTRON-UPDATER] Error no fatal:', e.message);
+    }
+  }
+
+  // ── Auto-update Scripts (motor de datos) ──────────────────────────────────
   if (mainWindow) mainWindow.loadURL(loadingPage(
-    'Verificando actualizaciones...',
-    'Consultando GitHub para ver si hay una versión más reciente...'
+    'Verificando actualización de scripts...',
+    'Consultando GitHub para ver si hay cambios en el motor de datos...'
   ));
   try {
     await verificarActualizacion(baseDir);
   } catch (e) {
-    console.log('[UPDATE] Error no fatal:', e.message);
+    console.log('[UPDATE SCRIPTS] Error no fatal:', e.message);
   }
 
   // ── Arrancar Python ───────────────────────────────────────────────────────

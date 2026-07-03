@@ -3133,28 +3133,32 @@ function resetWizardAfterSend() {
   wizardGo(1);
 }
 
-// --- Filtro de búsqueda de jefes en paso 1 ---
+// --- Filtro de búsqueda de jefes en paso 1 (con debounce) ---
+let _wizardFilterJefesTimer = null;
 function wizardFilterJefes() {
-  const q = normTxt($('wizSearchJefe') ? $('wizSearchJefe').value : '');
-  const bp = ($('wizFilterBP') ? $('wizFilterBP').value : '').toLowerCase();
-  const ger = ($('wizFilterGerencia') ? $('wizFilterGerencia').value : '').toLowerCase();
-  const area = ($('wizFilterArea') ? $('wizFilterArea').value : '').toLowerCase();
+  clearTimeout(_wizardFilterJefesTimer);
+  _wizardFilterJefesTimer = setTimeout(() => {
+    const q = normTxt($('wizSearchJefe') ? $('wizSearchJefe').value : '');
+    const bp = ($('wizFilterBP') ? $('wizFilterBP').value : '').toLowerCase();
+    const ger = ($('wizFilterGerencia') ? $('wizFilterGerencia').value : '').toLowerCase();
+    const area = ($('wizFilterArea') ? $('wizFilterArea').value : '').toLowerCase();
 
-  document.querySelectorAll('.jefe-card, .persona-card').forEach(block => {
-    const name = (block.dataset.jefeName || '').toLowerCase();
-    const cardBp = (block.dataset.hrbps || '').toLowerCase().split('|').filter(Boolean);
-    const cardGers = (block.dataset.gerencias || '').toLowerCase();
-    const cardAreas = (block.dataset.areas || '').toLowerCase();
+    document.querySelectorAll('.jefe-card, .persona-card').forEach(block => {
+      const name = (block.dataset.jefeName || '').toLowerCase();
+      const cardBp = (block.dataset.hrbps || '').toLowerCase().split('|').filter(Boolean);
+      const cardGers = (block.dataset.gerencias || '').toLowerCase();
+      const cardAreas = (block.dataset.areas || '').toLowerCase();
 
-    const matchText = !q || name.includes(q) || matchByTokens(name, q);
-    const matchBP = !bp || cardBp.includes(bp);
-    const matchGer = !ger || cardGers.includes(ger);
-    const matchArea = !area || cardAreas.includes(area);
+      const matchText = !q || name.includes(q) || matchByTokens(name, q);
+      const matchBP = !bp || cardBp.includes(bp);
+      const matchGer = !ger || cardGers.includes(ger);
+      const matchArea = !area || cardAreas.includes(area);
 
-    block.style.display = (matchText && matchBP && matchGer && matchArea) ? '' : 'none';
-  });
-  updateSummaryCards();
-  wizardRefreshResumen();
+      block.style.display = (matchText && matchBP && matchGer && matchArea) ? '' : 'none';
+    });
+    updateSummaryCards();
+    wizardRefreshResumen();
+  }, 250); // 250ms de retraso para no trabar la interfaz
 }
 
 // --- Seleccionar / deseleccionar todos los jefes ---
