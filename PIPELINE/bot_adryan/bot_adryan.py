@@ -142,10 +142,8 @@ def _carpeta_descarga(cfg) -> str:
 def buscar_y_descargar(page, cfg) -> str:
     log("Clic en Buscar...")
     page.get_by_role("button", name="Buscar").click()
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(8000)  # Adryan puede tardar mas de 5s en pintar la tabla y el boton Excel
 
-    log("Descargando reporte...")
+    log("Esperando a que termine de cargar el reporte (max 60s)...")
     timeout_dl = max(cfg.get("timeout_ms", 60000), 120000)  # minimo 2 minutos
 
     # Intentar varios selectores del boton de descarga Excel
@@ -162,18 +160,25 @@ def buscar_y_descargar(page, cfg) -> str:
         ".btn-success.mr-3",
         ".mr-3.btn",
     ]
+
     clicked = False
-    for sel in selectors:
-        try:
-            el = page.locator(sel).first
-            if el.is_visible(timeout=3000):
-                with page.expect_download(timeout=timeout_dl) as dl_info:
-                    el.click()
-                download = dl_info.value
-                clicked = True
-                break
-        except Exception:
-            continue
+    # Esperar dinamicamente hasta 60 segundos a que aparezca el boton
+    for intento in range(60):
+        if clicked: break
+        for sel in selectors:
+            try:
+                el = page.locator(sel).first
+                if el.is_visible(timeout=500):
+                    log(f"Boton Excel detectado ({sel}). Iniciando descarga...")
+                    with page.expect_download(timeout=timeout_dl) as dl_info:
+                        el.click()
+                    download = dl_info.value
+                    clicked = True
+                    break
+            except Exception:
+                continue
+        if not clicked:
+            page.wait_for_timeout(1000)
 
     if not clicked:
         raise RuntimeError("No se encontro el boton de descarga Excel en la pagina.")
