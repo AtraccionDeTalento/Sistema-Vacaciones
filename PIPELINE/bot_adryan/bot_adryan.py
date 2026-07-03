@@ -95,37 +95,19 @@ def ir_al_reporte(page, cfg):
 
 
 def fijar_filtros(page, cfg):
-    log(f"Fijando fechas {cfg['fecha_inicio']} -> {cfg['fecha_termino']} via pickadate...")
+    log(f"Fijando fechas {cfg['fecha_inicio']} -> {cfg['fecha_termino']} via interaccion de UI...")
 
-    def partes(fecha_ddmmaaaa: str):
-        d, m, y = fecha_ddmmaaaa.split("/")
-        return [int(y), int(m) - 1, int(d)]   # pickadate: [anio, mes(0=Ene), dia]
+    # Fecha Inicio
+    page.get_by_role("textbox", name="Fecha Inicio").click()
+    page.get_by_role("combobox").nth(2).select_option(cfg.get("mes_inicio", "3"))
+    page.get_by_role("gridcell", name=cfg.get("dia_inicio", "01/04/")).click()
 
-    payload = {
-        "ini_id": cfg.get("id_fecha_inicio", "txtDateInitialMotiveReport"),
-        "fin_id": cfg.get("id_fecha_termino", "txtDateEndMotiveReport"),
-        "ini": partes(cfg["fecha_inicio"]),
-        "fin": partes(cfg["fecha_termino"]),
-        "motivo_id": cfg.get("id_motivo", "cboVacationMotiveReport"),
-        "motivo": cfg.get("motivo_valor", "1"),
-    }
+    # Fecha Término
+    page.get_by_role("textbox", name="Fecha Término").click()
+    page.get_by_role("combobox").nth(2).select_option(cfg.get("mes_termino", "7"))
+    page.get_by_role("gridcell", name=cfg.get("dia_termino", "31/08/")).click()
 
-    res = page.evaluate(
-        """(d) => {
-            const $ = window.jQuery;
-            function setFecha(id, arr){
-                const pk = $('#'+id).pickadate('picker');
-                pk.set('select', arr);
-                return pk.get('select', 'dd/mm/yyyy');
-            }
-            const out = { ini: setFecha(d.ini_id, d.ini), fin: setFecha(d.fin_id, d.fin) };
-            const m = document.getElementById(d.motivo_id);
-            if (m){ m.value = d.motivo; m.dispatchEvent(new Event('change', {bubbles:true})); out.motivo = m.value; }
-            return out;
-        }""",
-        payload,
-    )
-    log(f"Filtros aplicados: {res}")
+    log("Fechas fijadas.")
 
 
 def _carpeta_descarga(cfg) -> str:
@@ -143,45 +125,20 @@ def buscar_y_descargar(page, cfg) -> str:
     log("Clic en Buscar...")
     page.get_by_role("button", name="Buscar").click()
 
-    log("Esperando a que termine de cargar el reporte (max 60s)...")
-    timeout_dl = max(cfg.get("timeout_ms", 60000), 120000)  # minimo 2 minutos
+    log("Esperando a que el boton de Excel (.mr-3) aparezca en la pagina...")
+    timeout_dl = max(cfg.get("timeout_ms", 60000), 120000)
 
-    # Intentar varios selectores del boton de descarga Excel
-    selectors = [
-        ".buttons-excel",
-        "button:has-text('Excel')",
-        ".btn-export",
-        "[aria-label*='xcel']",
-        ".mr-3",
-        "button.mr-3",
-        "[title*='xcel']",
-        "[class*='excel']",
-        "button[onclick*='xcel']",
-        ".btn-success.mr-3",
-        ".mr-3.btn",
-    ]
+    # El paso grabado utiliza .mr-3, esperamos a que sea visible
+    try:
+        # Aumentamos el timeout a 60s (60000ms) para que tenga tiempo de procesar
+        page.locator(".mr-3").wait_for(state="visible", timeout=60000)
+    except Exception as e:
+        raise RuntimeError("No se encontro el boton de descarga Excel en la pagina despues de 60s.") from e
 
-    clicked = False
-    # Esperar dinamicamente hasta 60 segundos a que aparezca el boton
-    for intento in range(60):
-        if clicked: break
-        for sel in selectors:
-            try:
-                el = page.locator(sel).first
-                if el.is_visible(timeout=500):
-                    log(f"Boton Excel detectado ({sel}). Iniciando descarga...")
-                    with page.expect_download(timeout=timeout_dl) as dl_info:
-                        el.click()
-                    download = dl_info.value
-                    clicked = True
-                    break
-            except Exception:
-                continue
-        if not clicked:
-            page.wait_for_timeout(1000)
-
-    if not clicked:
-        raise RuntimeError("No se encontro el boton de descarga Excel en la pagina.")
+    log("Boton detectado, iniciando descarga...")
+    with page.expect_download(timeout=timeout_dl) as dl_info:
+        page.locator(".mr-3").click()
+    download = dl_info.value
 
     carpeta = _carpeta_descarga(cfg)
     nombre = download.suggested_filename or f"{cfg['patron_crudo']}_{datetime.datetime.now():%m_%d_%Y %H_%M_%S}.xlsx"
