@@ -2683,9 +2683,10 @@ function wizardEvalSendBtn() {
 
 // Genera el correo final con datos reales (mismo endpoint que arma el envío)
 // y lo muestra en el modal de previsualización, tal como llegará a la bandeja.
-async function wizardPreviewCorreoReal() {
+// origen: 'w2' (paso 2, junto a la vista previa de plantilla) o 'w3' (paso 3).
+async function wizardPreviewCorreoReal(origen) {
   const mode = getWizardRecipientMode();
-  const btn = $('btnW3Preview');
+  const btn = origen === 'w2' ? $('btnW2Preview') : $('btnW3Preview');
   const hint = $('w3PreviewHint');
   const currentFields = readCurrentTemplateFields();
   let payload = null;
@@ -2735,6 +2736,7 @@ async function wizardPreviewCorreoReal() {
     });
     renderPreview(data);
     if (hint) hint.textContent = etiqueta;
+    if (etiqueta) notify(etiqueta, 'warn', 5000);
   } catch (e) {
     notify('No se pudo generar la previsualización: ' + (e.message || e), 'err');
   } finally {

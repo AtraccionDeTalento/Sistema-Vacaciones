@@ -190,7 +190,15 @@
           <div class="template-card" onclick="selectTemplate(this,'positivo')"><div class="tpl-icon">🌟</div><div class="tpl-name">Felicitación y seguimiento</div><div class="tpl-desc">Para equipos con buen avance</div></div>
           <div class="template-card" onclick="selectTemplate(this,'personalizado')"><div class="tpl-icon">✏️</div><div class="tpl-name">Mensaje personalizado</div><div class="tpl-desc">Escribe tu propio mensaje</div></div>
         </div>
-        <div class="wbox-title" style="margin-top:12px">Vista previa</div>
+        <div class="wbox-title" style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span>Vista previa</span>
+          <button class="btn" id="btnW2Preview" onclick="wizardPreviewCorreoReal('w2')"
+            title="Genera el correo final con datos reales del destinatario seleccionado: saludo con nombre, tabla del equipo y firma HRBP"
+            style="font-size:11px;font-weight:600;padding:3px 10px">
+            👁 Ver correo tal como llegará
+          </button>
+          <span style="font-size:11px;color:#94a3b8">Aquí abajo solo ves la plantilla; el botón muestra el correo real con destinatario y tabla del equipo.</span>
+        </div>
         <div class="msg-preview-box" id="msgPreviewBox">Selecciona una plantilla para ver cómo se verá el mensaje.</div>
         <div class="preview-live-note">Doble clic sobre el cuerpo, el aviso o la recomendación para editar el mensaje en tiempo real.</div>
         <div id="customMsgEditor" class="custom-msg-editor hidden" aria-hidden="true">
@@ -219,7 +227,7 @@
           <div class="sum-card"><div class="sum-lbl">Plantilla seleccionada</div><div class="sum-tpl" id="w3TplName">Recordatorio estándar</div><div class="sum-sub" id="w3MsgSnippet">—</div></div>
         </div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <button class="btn" id="btnW3Preview" onclick="wizardPreviewCorreoReal()"
+          <button class="btn" id="btnW3Preview" onclick="wizardPreviewCorreoReal('w3')"
             title="Genera el correo final con datos reales (nombre, tabla del equipo, firma HRBP) tal como llegará a la bandeja"
             style="font-weight:600">
             👁 Ver correo tal como llegará
