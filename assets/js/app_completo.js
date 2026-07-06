@@ -298,19 +298,22 @@ function updateMassGuardHint() {
     : `Envio masivo bloqueado. Destinatarios ${scope}: ${total}`;
 }
 
+// Canal principal: envío directo vía Outlook de escritorio (COM) desde la
+// cuenta del usuario. El flag conserva el nombre histórico enviar_smtp.
+// PA queda como respaldo manual (el flujo PA está bloqueado por TI).
 function getSelectedMassChannels() {
   return {
     enviar_teams: false,
-    enviar_smtp: false,  
-    encolar_pa: true,  
+    enviar_smtp: true,   // envío directo desde Outlook del usuario
+    encolar_pa: false,
   };
 }
 
 function getSelectedIndividualChannels() {
   return {
-    enviar_teams: false, 
-    enviar_smtp: false,  
-    encolar_para_pa: true, 
+    enviar_teams: false,
+    enviar_smtp: true,   // envío directo desde Outlook del usuario
+    encolar_para_pa: false,
   };
 }
 
@@ -528,143 +531,11 @@ async function toggleModoEnvio() {
   }
 }
 
-// ─── SMTP config modal ────────────────────────────────────────────────────────
-
-function _smtpBanner(msg, tipo) {
-  const el = document.getElementById('smtpStatusBanner');
-  if (!el) return;
-  el.style.display = 'block';
-  el.textContent = msg;
-  el.style.background = tipo === 'ok' ? '#d1fae5' : tipo === 'err' ? '#fee2e2' : '#fef3c7';
-  el.style.color   = tipo === 'ok' ? '#065f46' : tipo === 'err' ? '#991b1b' : '#92400e';
-  el.style.borderLeft = '4px solid ' + (tipo === 'ok' ? '#059669' : tipo === 'err' ? '#dc2626' : '#d97706');
-}
-
-async function _loadSmtpStatus() {
-  const btn = document.getElementById('btnSmtpStatus');
-  if (!btn) return;
-  try {
-    const d = await jfetch('/api/cola-pa/estado-in');
-    const ok = d.smtp_configurado === true;
-    btn.textContent = ok ? '📧 SMTP ✓' : '📧 SMTP ✗';
-    btn.style.borderColor  = ok ? '#059669' : '#dc2626';
-    btn.style.background   = ok ? '#f0fdf4' : '#fef2f2';
-    btn.style.color        = ok ? '#065f46' : '#991b1b';
-    btn.title = ok ? 'SMTP configurado — haz clic para cambiar credenciales' : 'SMTP no configurado o expirado — haz clic para configurar';
-  } catch {}
-}
-
-async function abrirModalSmtp() {
-  const modal = document.getElementById('modalSmtp');
-  if (!modal) return;
-  modal.style.display = 'flex';
-  document.getElementById('smtpStatusBanner').style.display = 'none';
-  // Pre-cargar email actual
-  try {
-    const d = await jfetch('/api/cola-pa/estado-in');
-    const emailEl = document.getElementById('inpSmtpEmail');
-    if (emailEl && d.smtp_email) emailEl.value = d.smtp_email;
-    if (d.smtp_configurado === false) {
-      _smtpBanner('⚠️ SMTP inactivo — la contraseña de aplicación puede haber expirado.', 'warn');
-    } else if (d.smtp_configurado === true) {
-      _smtpBanner('✅ SMTP funciona correctamente.', 'ok');
-    }
-  } catch {}
-}
-
-function cerrarModalSmtp() {
-  const modal = document.getElementById('modalSmtp');
-  if (modal) modal.style.display = 'none';
-}
-
-async function _callSmtpTest(soloProbar) {
-  const email = document.getElementById('inpSmtpEmail')?.value?.trim();
-  const pass  = document.getElementById('inpSmtpPass')?.value?.trim();
-  if (!email) { _smtpBanner('Ingresa la cuenta de correo.', 'warn'); return; }
-  if (!pass && !soloProbar) { _smtpBanner('Ingresa la nueva contraseña de aplicación.', 'warn'); return; }
-  const btnT = document.getElementById('btnTestSmtp');
-  const btnG = document.getElementById('btnGuardarSmtp');
-  if (btnT) btnT.disabled = true;
-  if (btnG) btnG.disabled = true;
-  _smtpBanner('⏳ Probando conexión…', 'warn');
-  try {
-    const body = { smtp_email: email, solo_prueba: soloProbar };
-    if (pass) body.smtp_password = pass;
-    const d = await jfetch('/api/smtp/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (d.ok) {
-      _smtpBanner('✅ ' + (d.mensaje || 'SMTP funciona correctamente.'), 'ok');
-      if (!soloProbar) notify('Credenciales SMTP guardadas y verificadas.', 'ok');
-    } else {
-      _smtpBanner('❌ ' + (d.error || d.mensaje || 'Error desconocido.'), 'err');
-    }
-    await _loadSmtpStatus();
-  } catch (e) {
-    _smtpBanner('❌ Error: ' + e.message, 'err');
-  } finally {
-    if (btnT) btnT.disabled = false;
-    if (btnG) btnG.disabled = false;
-  }
-}
-
-async function testSmtpSolo()    { await _callSmtpTest(true); }
-async function guardarYTestSmtp(){ await _callSmtpTest(false); }
-
-async function enviarColaSmtp() {
-  // Usa Outlook COM (no necesita SMTP AUTH). Procesa in/ y errores/.
-  const btn = document.getElementById('btnEnviarColaSmtp');
-  if (btn) btn.disabled = true;
-  _smtpBanner('⏳ Enviando via Outlook (in/ + errores/)…', 'warn');
-  try {
-    const d = await jfetch('/api/cola-pa/enviar-outlook-ahora', { method: 'POST' });
-    if (d.ok || (d.enviados ?? 0) >= 0) {
-      const msg = `✅ Outlook — Enviados: ${d.enviados ?? 0}  Errores: ${d.errores ?? 0}`;
-      _smtpBanner(msg, (d.errores ?? 0) > 0 ? 'warn' : 'ok');
-      notify(`Cola procesada via Outlook — enviados: ${d.enviados ?? 0}`, 'ok');
-      if (d.log) console.log('[Outlook cola]', d.log);
-    } else {
-      const err = d.error || 'Error al enviar. ¿Está Outlook abierto?';
-      _smtpBanner('❌ ' + err, 'err');
-    }
-  } catch (e) {
-    _smtpBanner('❌ ' + e.message, 'err');
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-async function enviarColaSmtpDirecto() {
-  // Alternativa: SMTP directo (requiere SMTP AUTH habilitado)
-  const btn = document.getElementById('btnEnviarColaSmtpAlt');
-  if (btn) btn.disabled = true;
-  _smtpBanner('⏳ Enviando via SMTP…', 'warn');
-  try {
-    const d = await jfetch('/api/cola-pa/enviar-smtp-ahora', { method: 'POST' });
-    if (d.ok || d.enviados >= 0) {
-      _smtpBanner(`✅ SMTP — Enviados: ${d.enviados ?? 0}  Errores: ${d.errores ?? 0}`, 'ok');
-      notify(`Cola procesada via SMTP — enviados: ${d.enviados ?? 0}`, 'ok');
-    } else {
-      _smtpBanner('❌ ' + (d.error || 'Error SMTP.'), 'err');
-    }
-  } catch (e) {
-    _smtpBanner('❌ ' + e.message, 'err');
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
 // Cerrar modal al hacer clic fuera
 document.addEventListener('click', e => {
-  const modal = document.getElementById('modalSmtp');
-  if (modal && e.target === modal) cerrarModalSmtp();
   const modalH = document.getElementById('modalHrbp');
   if (modalH && e.target === modalH) cerrarModalHrbp();
 });
-
-// ─── fin SMTP modal ───────────────────────────────────────────────────────────
 
 // ─── HRBP por área modal ──────────────────────────────────────────────────────
 let _hrbpData = { hrbp_disponibles: [], hrbp_asignacion: {}, areas: [] };
@@ -1820,6 +1691,12 @@ async function enviarGlobal(flags) {
   if (!selectedSupervisores.length) {
     throw new Error('No hay jefes seleccionados dentro de la vista actual para enviar.');
   }
+  if (flags.enviar_smtp && selectedSupervisores.length > 8) {
+    const seguir = window.confirm(
+      `Se enviarán ${selectedSupervisores.length} correos (uno por jefe) desde tu cuenta de Outlook.\n\n¿Deseas continuar?`
+    );
+    if (!seguir) throw new Error('Envío cancelado por el usuario.');
+  }
   const btn = $('btnAllSend');
   state.massSendInFlight = true;
   if (btn) btn.disabled = true;
@@ -1849,15 +1726,22 @@ async function enviarGlobal(flags) {
     const teamsOkM = flags.enviar_teams && data && data.teams_enviado;
     const smtpOkM = flags.enviar_smtp && data && data.smtp_enviados > 0;
     
-    if (paOkM) {
+    if (smtpOkM) {
+      const enviados = data.smtp_enviados || 0;
+      setStatus(`✅ Campaña enviada: ${enviados} correo(s) despachados.${teamsOkM ? ' Teams: OK.' : ''}`);
+      notify(`Campaña enviada correctamente: ${enviados} correo(s).`, 'ok', 6000);
+    } else if (paOkM) {
       setStatus(`✅ Campaña enviada. Correos en camino vía Power Automate (~${delay}s).${teamsOkM ? ' Teams: OK.' : ''}`);
       notify(`Campaña enviada: ${file}. Seguridad activa (${delay}s).`, 'ok');
-    } else if (smtpOkM || teamsOkM) {
-      setStatus(`✅ Campaña enviada correctamente vía SMTP/Teams.`);
-      notify(`Campaña procesada exitosamente (${data.smtp_enviados || 0} enviados).`, 'ok');
+    } else if (teamsOkM) {
+      setStatus(`✅ Campaña enviada correctamente vía Teams.`);
+      notify(`Campaña procesada exitosamente.`, 'ok');
     } else {
-      setStatus(`⚠️ Campaña procesada con errores (SMTP/Teams fallaron). Revisa la consola.`);
-      notify(`Ocurrió un problema al enviar la campaña.`, 'err');
+      const errOutlook = flags.enviar_smtp
+        ? ' No se pudieron enviar los correos. Verifica que Outlook de escritorio esté abierto con tu sesión iniciada.'
+        : '';
+      setStatus(`⚠️ Campaña procesada con errores.${errOutlook} Revisa la consola.`);
+      notify(errOutlook ? `No se pudo enviar. ¿Está Outlook de escritorio abierto?` : `Ocurrió un problema al enviar la campaña.`, 'err');
     }
   } finally {
     state.massSendInFlight = false;
@@ -1957,18 +1841,20 @@ async function enviarInd(flags) {
   const teamsOkI = flags.enviar_teams && data.teams_enviado;
   const smtpOkI = flags.enviar_smtp && data.smtp_enviado;
   const pruebaTxt = data.modo_prueba ? ' (modo prueba)' : '';
-  if (paOkI) {
+  if (smtpOkI) {
+    setStatus(`✅ Correo enviado a ${nombre}${pruebaTxt}.${teamsOkI ? ' Teams: OK.' : ''}`);
+    notify(`Correo enviado correctamente a ${nombre}.`, 'ok', 5000);
+  } else if (paOkI) {
     setStatus(`✅ Correo en camino para ${nombre}${pruebaTxt}. Power Automate lo procesará en ~${delay}s.${teamsOkI ? ' Teams: OK.' : ''}`);
-  } else if (teamsOkI || smtpOkI) {
+    notify(`Mensaje encolado para ${nombre}. Se procesará en ${delay}s (${infoFile}).`, 'warn', 4000);
+  } else if (teamsOkI) {
     setStatus(`✅ Envío ejecutado para ${nombre}${pruebaTxt}.`);
+    notify(`Mensaje enviado para ${nombre} vía Teams.`, 'ok');
   } else {
     const teamsErrI = flags.enviar_teams && !data.teams_enviado ? ` Teams: ${data.teams_error || 'sin webhook'}` : '';
-    setStatus(`⚠️ Envío para ${nombre} con advertencias.${teamsErrI}${pruebaTxt}`);
-  }
-  if (paOkI) {
-    notify(`Mensaje encolado para ${nombre}. Se procesará en ${delay}s (${infoFile}).`, 'warn', 4000);
-  } else {
-    notify(`Mensaje enviado para ${nombre} via SMTP/Teams.`, 'ok');
+    const outlookErrI = flags.enviar_smtp && !data.smtp_enviado ? ` Outlook: ${data.smtp_error || '¿está Outlook de escritorio abierto?'}` : '';
+    setStatus(`⚠️ Envío para ${nombre} con advertencias.${outlookErrI}${teamsErrI}${pruebaTxt}`);
+    notify(`No se completó el envío para ${nombre}.${outlookErrI}`, 'err', 6000);
   }
   await Promise.allSettled([refreshQueueState(), refreshConfirmacionesResumen()]);
   log('Envio individual', data);
@@ -1992,7 +1878,6 @@ async function boot() {
       console.log(`[DEBUG] Cargando KPIs (intento ${attempt})...`);
       initData = await jfetch('/api/init');
       loadModoEnvio().catch(() => {});
-      _loadSmtpStatus().catch(() => {});
       break;
     } catch (e) {
       console.warn(`[BOOT] /api/init intento ${attempt} falló:`, e.message);
@@ -2796,6 +2681,67 @@ function wizardEvalSendBtn() {
   if (btn) btn.disabled = !ok;
 }
 
+// Genera el correo final con datos reales (mismo endpoint que arma el envío)
+// y lo muestra en el modal de previsualización, tal como llegará a la bandeja.
+async function wizardPreviewCorreoReal() {
+  const mode = getWizardRecipientMode();
+  const btn = $('btnW3Preview');
+  const hint = $('w3PreviewHint');
+  const currentFields = readCurrentTemplateFields();
+  let payload = null;
+  let etiqueta = '';
+
+  if (mode === 'personas') {
+    const rows = getEffectiveSelectedPersonRows();
+    if (!rows.length) return notify('Selecciona al menos una persona para previsualizar.', 'warn');
+    const row = rows[0];
+    const supervisorNombre = String((row && row.supervisor) || '').trim();
+    if (!supervisorNombre) return notify('La persona seleccionada no tiene una jefatura asociada.', 'warn');
+    const supervisor = state.supMap[supervisorNombre.toLowerCase()] || {};
+    payload = {
+      nombre: supervisor.nombre || supervisorNombre,
+      email: supervisor.email || '',
+      nombre_objetivo: String(row.nombre || '').trim(),
+      email_objetivo: String(row.correo || row.email || '').trim(),
+      hrbp_objetivo: String(row.hrbp || '').trim(),
+    };
+    if (rows.length > 1) etiqueta = `Mostrando 1 de ${rows.length} correos (jefe: ${payload.nombre}). Cada jefe recibe su propia versión.`;
+  } else {
+    const seleccionados = getEffectiveSelectedSupervisores();
+    if (!seleccionados.length) return notify('Selecciona al menos una jefatura para previsualizar.', 'warn');
+    const key = seleccionados[0];
+    const supervisor = state.supMap[(key || '').toLowerCase()] || {};
+    payload = {
+      nombre: supervisor.nombre || key,
+      email: supervisor.email || '',
+      hrbp_objetivo: getActiveWizardHrbpFilter(),
+    };
+    if (seleccionados.length > 1) etiqueta = `Mostrando 1 de ${seleccionados.length} correos. Cada jefe recibe su propia versión con su equipo.`;
+  }
+
+  payload.asunto = currentFields.asunto || '';
+  payload.mensaje = currentFields.mensaje || '';
+  payload.aviso = currentFields.aviso || '';
+  payload.recomendacion = currentFields.reco || '';
+  payload.modo_prueba = $('chkModoPrueba') ? $('chkModoPrueba').checked : false;
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando correo real…'; }
+  if (hint) hint.textContent = '';
+  try {
+    const data = await jfetch('/api/preview-supervisor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    renderPreview(data);
+    if (hint) hint.textContent = etiqueta;
+  } catch (e) {
+    notify('No se pudo generar la previsualización: ' + (e.message || e), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '👁 Ver correo tal como llegará'; }
+  }
+}
+
 function populateWizardFiltersFromRows(rows) {
   const bps = new Set();
   const gers = new Set();
@@ -3027,7 +2973,7 @@ function wizardLanzar() {
       if (chk) chk.checked = false;
       wizardEvalSendBtn();
       const pill = document.getElementById('massStatusPill');
-      if (pill) { pill.className = 'status-pill queue'; pill.textContent = '📬 Mensajes en camino'; }
+      if (pill) { pill.className = 'status-pill queue'; pill.textContent = '✅ Correos enviados desde Outlook'; }
     })
     .catch(e => {
       if (btn) {
@@ -3074,18 +3020,20 @@ async function enviarSupervisorSeleccionado(nombreSupervisor, flags) {
   const paOk = payload.encolar_para_pa && data.json_guardado;
   const teamsOk = payload.enviar_teams && data.teams_enviado;
   const smtpOk = payload.enviar_smtp && data.smtp_enviado;
-  if (paOk) {
+  if (smtpOk) {
+    setStatus(`✅ Correo enviado a ${payload.nombre}.${teamsOk ? ' Teams: OK.' : ''}`);
+    notify(`Correo enviado correctamente a ${payload.nombre}.`, 'ok', 5000);
+  } else if (paOk) {
     setStatus(`✅ Correo en camino para ${payload.nombre}. Power Automate lo procesará en ~${delay}s.${teamsOk ? ' Teams: OK.' : ''}`);
-  } else if (teamsOk || smtpOk) {
+    notify(`Mensaje encolado para ${payload.nombre}. Se procesará en ${delay}s (${infoFile}).`, 'warn', 4000);
+  } else if (teamsOk) {
     setStatus(`✅ Envío ejecutado para ${payload.nombre}.`);
+    notify(`Mensaje enviado exitosamente para ${payload.nombre}.`, 'ok');
   } else {
     const teamsErr = payload.enviar_teams && !data.teams_enviado ? ` Teams: ${data.teams_error || 'sin webhook'}` : '';
-    setStatus(`⚠️ Envío para ${payload.nombre} con advertencias.${teamsErr}`);
-  }
-  if (paOk) {
-    notify(`Mensaje encolado para ${payload.nombre}. Se procesará en ${delay}s (${infoFile}).`, 'warn', 4000);
-  } else {
-    notify(`Mensaje enviado exitosamente para ${payload.nombre}.`, 'ok');
+    const outlookErr = payload.enviar_smtp && !data.smtp_enviado ? ` Outlook: ${data.smtp_error || '¿está Outlook de escritorio abierto?'}` : '';
+    setStatus(`⚠️ Envío para ${payload.nombre} con advertencias.${outlookErr}${teamsErr}`);
+    notify(`No se completó el envío para ${payload.nombre}.${outlookErr}`, 'err', 6000);
   }
   return data;
 }
@@ -3125,18 +3073,20 @@ async function enviarPersonaObjetivoSeleccionada(row, flags) {
   const paOk2 = payload.encolar_para_pa && data.json_guardado;
   const teamsOk2 = payload.enviar_teams && data.teams_enviado;
   const smtpOk2 = payload.enviar_smtp && data.smtp_enviado;
-  if (paOk2) {
+  if (smtpOk2) {
+    setStatus(`✅ Correo enviado para ${nombrePersona}.${teamsOk2 ? ' Teams: OK.' : ''}`);
+    notify(`Correo enviado correctamente para ${nombrePersona}.`, 'ok', 5000);
+  } else if (paOk2) {
     setStatus(`✅ Correo en camino para ${nombrePersona}. Power Automate lo procesará en ~${delay}s.${teamsOk2 ? ' Teams: OK.' : ''}`);
-  } else if (teamsOk2 || smtpOk2) {
+    notify(`Mensaje encolado para ${nombrePersona}. Se procesará en ${delay}s (${infoFile}).`, 'warn', 4000);
+  } else if (teamsOk2) {
     setStatus(`✅ Envío ejecutado para ${nombrePersona}.`);
+    notify(`Mensaje enviado exitosamente para ${nombrePersona}.`, 'ok');
   } else {
     const teamsErr2 = payload.enviar_teams && !data.teams_enviado ? ` Teams: ${data.teams_error || 'sin webhook'}` : '';
-    setStatus(`⚠️ Envío para ${nombrePersona} con advertencias.${teamsErr2}`);
-  }
-  if (paOk2) {
-    notify(`Mensaje encolado para ${nombrePersona}. Se procesará en ${delay}s (${infoFile}).`, 'warn', 4000);
-  } else {
-    notify(`Mensaje enviado exitosamente para ${nombrePersona}.`, 'ok');
+    const outlookErr2 = payload.enviar_smtp && !data.smtp_enviado ? ` Outlook: ${data.smtp_error || '¿está Outlook de escritorio abierto?'}` : '';
+    setStatus(`⚠️ Envío para ${nombrePersona} con advertencias.${outlookErr2}${teamsErr2}`);
+    notify(`No se completó el envío para ${nombrePersona}.${outlookErr2}`, 'err', 6000);
   }
   return data;
 }

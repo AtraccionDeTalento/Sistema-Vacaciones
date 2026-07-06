@@ -303,10 +303,6 @@ TEAMS_WEBHOOK_PERSONAL_URL = os.environ.get('TEAMS_WEBHOOK_PERSONAL_URL', '') or
 
 POWER_AUTOMATE_URL         = os.environ.get('POWER_AUTOMATE_URL', '') or _PA_CONFIG.get('power_automate_url', '')
 
-SMTP_EMAIL         = _PA_CONFIG.get('smtp_email', '')
-
-SMTP_PASSWORD      = _PA_CONFIG.get('smtp_password', '')
-
 _scheduler_activo  = bool(_PA_CONFIG.get('scheduler_activo', True))
 
 
@@ -846,54 +842,6 @@ def _liberar_todo_pa_ahora():
 
 
 
-
-
-def _smtp_procesar_in():
-    """Fallback: si un archivo lleva más de 3 min en in/ sin que PA lo levante,
-    lo enviamos por SMTP directamente y lo movemos a procesados/."""
-    ESPERA = 3 * 60  # segundos antes de asumir que PA no va a procesar
-    procesados_dir = os.path.join(COLA_DIR, 'procesados')
-    errores_dir    = os.path.join(COLA_DIR, 'errores')
-    os.makedirs(procesados_dir, exist_ok=True)
-    os.makedirs(errores_dir, exist_ok=True)
-
-    ahora = time.time()
-    for nombre in list(os.listdir(COLA_IN_DIR)):
-        if not nombre.lower().endswith('.json'):
-            continue
-        src = os.path.join(COLA_IN_DIR, nombre)
-        if not os.path.isfile(src):
-            continue
-        if ahora - os.path.getmtime(src) < ESPERA:
-            continue  # todavía joven, PA puede estar a punto de tomarlo
-
-        try:
-            with open(src, 'r', encoding='utf-8') as f:
-                entradas = json.load(f)
-            if not isinstance(entradas, list):
-                entradas = [entradas]
-
-            enviados, errores = 0, []
-            for entrada in entradas:
-                email  = (entrada.get('email_jefe') or entrada.get('email_destino_real') or '').strip()
-                nombre_dest = entrada.get('nombre_jefe', '')
-                asunto = entrada.get('asunto', 'Alertas Vacaciones USIL')
-                html   = entrada.get('mensaje_html', '')
-                if not email or '@' not in email or not html:
-                    continue
-                ok, err = _enviar_correo_smtp(email, nombre_dest, asunto, html)
-                if ok:
-                    enviados += 1
-                else:
-                    errores.append(f'{email}: {err}')
-                    print(f'[SMTP-FB] ERROR enviando a {email}: {err}')
-
-            destino = procesados_dir if not errores else errores_dir
-            shutil.move(src, os.path.join(destino, nombre))
-            print(f'[SMTP-FB] {nombre}: {enviados} enviados, {len(errores)} errores -> {os.path.basename(destino)}/')
-
-        except Exception as e:
-            print(f'[SMTP-FB] Error procesando {nombre}: {e}')
 
 
 def _outlook_procesar_in():
@@ -6288,37 +6236,6 @@ def api_hrbp_config_save():
     return jsonify({'ok': True, 'guardado': len(hrbp_asignacion)})
 
 
-@app.route('/api/smtp/test', methods=['POST'])
-def api_smtp_test():
-    """Prueba las credenciales SMTP y opcionalmente las actualiza en pa_config.json."""
-    payload = request.get_json(silent=True) or {}
-    email_nuevo   = str(payload.get('smtp_email',    '') or '').strip()
-    pass_nueva    = str(payload.get('smtp_password', '') or '').strip()
-    solo_prueba   = bool(payload.get('solo_prueba', False))
-
-    # Si se enviaron credenciales nuevas, actualizar config en memoria y disco
-    if email_nuevo and pass_nueva and not solo_prueba:
-        ok_cfg, err_cfg = _guardar_pa_config({'smtp_email': email_nuevo, 'smtp_password': pass_nueva})
-        if not ok_cfg:
-            return jsonify({'ok': False, 'error': f'No se pudo guardar config: {err_cfg}'}), 500
-
-    # Probar con las credenciales actuales (o las recien guardadas)
-    import smtplib
-    smtp_user = _PA_CONFIG.get('smtp_email', '') or SMTP_EMAIL
-    smtp_pass = _PA_CONFIG.get('smtp_password', '') or SMTP_PASSWORD
-    if not smtp_user or not smtp_pass:
-        return jsonify({'ok': False, 'error': 'SMTP no configurado'}), 400
-    try:
-        with smtplib.SMTP('smtp.office365.com', 587, timeout=15) as srv:
-            srv.ehlo(); srv.starttls(); srv.ehlo()
-            srv.login(smtp_user, smtp_pass)
-        return jsonify({'ok': True, 'mensaje': f'SMTP OK — credenciales validas para {smtp_user}',
-                        'actualizado': bool(email_nuevo and not solo_prueba)})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e),
-                        'ayuda': 'Genera una nueva contrasena de app en https://aka.ms/mysecurityinfo'})
-
-
 @app.route('/api/cola-pa/estado-in', methods=['GET'])
 def api_cola_estado_in():
     """Devuelve cuántos archivos hay en in/ y su estado."""
@@ -6338,10 +6255,7 @@ def api_cola_estado_in():
             'minutos_esperando': round((time.time() - mt) / 60, 1),
         })
     archivos.sort(key=lambda x: x['creado'])
-    smtp_ok = bool(_PA_CONFIG.get('smtp_email') and _PA_CONFIG.get('smtp_password'))
-    return jsonify({'ok': True, 'en_cola_in': len(archivos), 'archivos': archivos,
-                    'smtp_configurado': smtp_ok,
-                    'smtp_email': _PA_CONFIG.get('smtp_email', SMTP_EMAIL)})
+    return jsonify({'ok': True, 'en_cola_in': len(archivos), 'archivos': archivos})
 
 
 @app.route('/api/tester-config', methods=['GET', 'POST'])
@@ -7093,58 +7007,6 @@ def api_cola_liberar_todo():
     num = _liberar_todo_pa_ahora()
 
     return jsonify({'ok': True, 'total': num})
-
-
-@app.route('/api/cola-pa/enviar-smtp-ahora', methods=['POST'])
-def api_cola_enviar_smtp_ahora():
-    """Procesa inmediatamente todos los archivos en in/ via SMTP.
-    Útil cuando Power Automate no funciona."""
-    import threading
-    def _run():
-        try:
-            _smtp_procesar_in.__globals__['time'] = time  # asegurar import
-        except Exception:
-            pass
-        _smtp_procesar_in._espera_override = 0  # sin espera minima
-        _smtp_procesar_in()
-    # Forzar sin espera: copiar la logica directamente para no modificar la funcion
-    procesados_dir = os.path.join(COLA_DIR, 'procesados')
-    errores_dir    = os.path.join(COLA_DIR, 'errores')
-    os.makedirs(procesados_dir, exist_ok=True)
-    os.makedirs(errores_dir, exist_ok=True)
-    resultados = []
-    for nombre in list(os.listdir(COLA_IN_DIR)):
-        if not nombre.lower().endswith('.json'):
-            continue
-        src = os.path.join(COLA_IN_DIR, nombre)
-        if not os.path.isfile(src):
-            continue
-        try:
-            with open(src, 'r', encoding='utf-8') as f:
-                entradas = json.load(f)
-            if not isinstance(entradas, list):
-                entradas = [entradas]
-            enviados, errores_item = 0, []
-            for entrada in entradas:
-                email  = (entrada.get('email_jefe') or entrada.get('email_destino_real') or '').strip()
-                asunto = entrada.get('asunto', 'Alertas Vacaciones USIL')
-                html   = entrada.get('mensaje_html', '')
-                nombre_dest = entrada.get('nombre_jefe', '')
-                if not email or '@' not in email or not html:
-                    continue
-                ok, err = _enviar_correo_smtp(email, nombre_dest, asunto, html)
-                if ok:
-                    enviados += 1
-                else:
-                    errores_item.append(err)
-            destino = procesados_dir if not errores_item else errores_dir
-            shutil.move(src, os.path.join(destino, nombre))
-            resultados.append({'archivo': nombre, 'enviados': enviados, 'errores': errores_item})
-        except Exception as e:
-            resultados.append({'archivo': nombre, 'error': str(e)})
-    total_ok = sum(r.get('enviados', 0) for r in resultados)
-    total_err = sum(len(r.get('errores', [])) for r in resultados)
-    return jsonify({'ok': True, 'archivos': len(resultados), 'enviados': total_ok, 'errores': total_err, 'detalle': resultados})
 
 
 @app.route('/api/cola-pa/enviar-outlook-ahora', methods=['POST'])
@@ -9226,64 +9088,52 @@ def _aviso_recomendacion_persona(p):
 
 
 def _enviar_correo_smtp(to_email, to_nombre, asunto, html_body):
-
-    """EnvÃ­a correo directo via SMTP Office 365. Retorna (ok, error_str).
-
-    No depende de Power Automate â€” funciona aunque el flujo estÃ© roto."""
-
-    import smtplib
-
-    from email.mime.multipart import MIMEMultipart
-
-    from email.mime.text import MIMEText
-
-    # Leer siempre en vivo para capturar cambios en pa_config.json sin reiniciar
-    smtp_user = _PA_CONFIG.get('smtp_email', '') or SMTP_EMAIL
-    smtp_pass = _PA_CONFIG.get('smtp_password', '') or SMTP_PASSWORD
-
-    if not smtp_user or not smtp_pass:
-
-        return False, 'SMTP no configurado: falta smtp_email o smtp_password en pa_config.json'
+    """Envia el correo directamente via Outlook de escritorio (COM), en silencio,
+    desde la cuenta del usuario con sesion iniciada. El panel se comporta como un
+    envio real: se presiona Enviar y el correo sale sin ventanas intermedias.
+    No depende de Power Automate ni de SMTP AUTH. Retorna (ok, error_str)."""
 
     if not to_email or '@' not in to_email:
-
         return False, f'Email destino invalido: {to_email!r}'
 
     try:
+        import pythoncom
+        import win32com.client as win32
+    except ImportError:
+        print('[OUTLOOK] Falta pywin32. Instala con: pip install pywin32')
+        return False, 'Falta pywin32. Instala con: pip install pywin32'
 
-        msg = MIMEMultipart('alternative')
+    com_inicializado = False
+    try:
+        # Waitress atiende cada request en un hilo distinto; COM exige
+        # inicializarse en el hilo que lo usa.
+        pythoncom.CoInitialize()
+        com_inicializado = True
 
-        msg['Subject'] = asunto
+        try:
+            outlook = win32.Dispatch('outlook.application')
+        except Exception as e:
+            print(f'[OUTLOOK] Error conectando a Outlook: {e}')
+            return False, ('No se pudo conectar con Outlook. Verifica que Outlook '
+                           f'de escritorio este instalado y con sesion iniciada: {e}')
 
-        msg['From']    = f'People Analytics USIL <{smtp_user}>'
+        mail = outlook.CreateItem(0)
+        mail.To = to_email
+        mail.Subject = asunto
+        mail.HTMLBody = html_body
+        mail.Send()
 
-        msg['To']      = to_email
-
-        msg['X-USIL-PA'] = 'Sistema-Vacaciones'
-
-        msg.attach(MIMEText(html_body, 'html', 'utf-8'))
-
-        with smtplib.SMTP('smtp.office365.com', 587, timeout=25) as srv:
-
-            srv.ehlo()
-
-            srv.starttls()
-
-            srv.ehlo()
-
-            srv.login(smtp_user, smtp_pass)
-
-            srv.sendmail(smtp_user, [to_email], msg.as_bytes())
-
-        print(f'[SMTP] OK -> {to_email} | {asunto[:60]}')
-
+        print(f'[OUTLOOK] Enviado -> {to_email} | {asunto[:60]}')
         return True, None
-
     except Exception as e:
-
-        print(f'[SMTP] Error -> {to_email}: {e}')
-
+        print(f'[OUTLOOK] Error enviando correo -> {to_email}: {e}')
         return False, str(e)
+    finally:
+        if com_inicializado:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
 
 

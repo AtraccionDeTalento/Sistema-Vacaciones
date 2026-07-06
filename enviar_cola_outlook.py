@@ -10,6 +10,8 @@ Uso:
     python enviar_cola_outlook.py            # envia in/ y errores/
     python enviar_cola_outlook.py --dry-run  # muestra qué enviaría sin enviar nada
     python enviar_cola_outlook.py --solo-in  # solo procesa in/ (sin tocar errores/)
+    python enviar_cola_outlook.py --revisar  # abre borradores en Outlook (no envía;
+                                             # el usuario revisa y presiona Enviar)
 """
 import os
 import sys
@@ -25,6 +27,7 @@ AQUI        = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(AQUI, 'pa_config.json')
 DRY_RUN     = '--dry-run' in sys.argv
 SOLO_IN     = '--solo-in' in sys.argv
+REVISAR     = '--revisar' in sys.argv   # abre borradores para revision manual en vez de enviar
 
 
 def cargar_config():
@@ -46,14 +49,19 @@ def resolver_cola_dir(cfg):
 
 
 def enviar_via_outlook(para, nombre, asunto, html_body):
-    """Envía usando la instancia de Outlook ya abierta (COM). No necesita SMTP."""
+    """Envía (o abre como borrador con --revisar) usando la instancia de Outlook
+    ya abierta (COM). No necesita SMTP."""
     import win32com.client as win32
     outlook = win32.Dispatch('outlook.application')
     mail = outlook.CreateItem(0)   # 0 = MailItem
     mail.To      = para
     mail.Subject = asunto
     mail.HTMLBody = html_body
-    if not DRY_RUN:
+    if DRY_RUN:
+        return True
+    if REVISAR:
+        mail.Display()   # el usuario revisa y presiona Enviar desde su cuenta
+    else:
         mail.Send()
     return True
 
@@ -103,7 +111,12 @@ def procesar_directorio(src_dir, proc_dir, err_dir, etiqueta=''):
                     enviar_via_outlook(para, nombre_dest, asunto, html)
                     ok_count += 1
                     total_ok += 1
-                    print(f'  [OK] {"Simularia envio" if DRY_RUN else "Enviado OK"}')
+                    if DRY_RUN:
+                        print('  [OK] Simularia envio')
+                    elif REVISAR:
+                        print('  [OK] Borrador abierto en Outlook (revisa y presiona Enviar)')
+                    else:
+                        print('  [OK] Enviado OK')
                 except Exception as e:
                     err_count += 1
                     total_err += 1
@@ -144,9 +157,13 @@ def main():
         total_err += err
 
     print(f'\n{"="*50}')
-    print(f'RESUMEN {"(DRY-RUN) " if DRY_RUN else ""}: {total_ok} enviados, {total_err} errores')
+    etiqueta = 'borradores abiertos' if REVISAR and not DRY_RUN else 'enviados'
+    print(f'RESUMEN {"(DRY-RUN) " if DRY_RUN else ""}: {total_ok} {etiqueta}, {total_err} errores')
     if DRY_RUN:
         print('(Nada fue enviado -- usa sin --dry-run para enviar de verdad)')
+    elif REVISAR and total_ok:
+        print('(Los archivos se movieron a procesados/ -- los borradores quedaron abiertos en Outlook;')
+        print(' revisa cada ventana y presiona Enviar. Si cierras un borrador sin enviar, se descarta.)')
 
 
 if __name__ == '__main__':

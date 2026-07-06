@@ -64,8 +64,8 @@ Detección de columnas/hojas es **tolerante**: por nombre de cabecera normalizad
 
 ### Notificaciones (3 canales)
 
-1. **Cola "File Drop" → Power Automate**: escribe `{uuid}.json` en `alertas_cola/in/` (dentro de OneDrive). Power Automate (o `enviar_cola_outlook.py`) lo recoge y envía el correo corporativo. Desacopla la auth de Office 365. Ver `_guardar_json_cola`, `_cola_pa_loop`, `_aplicar_rutas_cola`.
-2. **SMTP nativo** (`_enviar_correo_smtp`) — usa `smtp_email`/`smtp_password` de `pa_config.json`.
+1. **Outlook envío directo (COM)** — **canal principal del frontend**. `_enviar_correo_smtp` (nombre histórico: ya NO usa SMTP; todo el código SMTP real fue eliminado) envía el correo en silencio vía Outlook de escritorio (`mail.Send()`) desde la cuenta del usuario con sesión iniciada — desde el panel se percibe como envío directo. Requiere Outlook abierto. Usa `pythoncom.CoInitialize()` porque Waitress atiende cada request en un hilo distinto. Los flags `enviar_smtp`/`smtp_*` de API y UI conservan el nombre histórico pero significan "enviar vía Outlook COM". `enviar_cola_outlook.py --revisar` abre la cola como borradores (Display) en vez de auto-enviar.
+2. **Cola "File Drop" → Power Automate** (respaldo): escribe `{uuid}.json` en `alertas_cola/in/` (dentro de OneDrive). Power Automate (o `enviar_cola_outlook.py`, o el botón "📮 Cola de correos" de la UI) lo recoge y envía. Ver `_guardar_json_cola`, `_cola_pa_loop`, `_aplicar_rutas_cola`. SMTP AUTH y el flujo PA desde la cuenta de Talento están bloqueados por TI, por eso dejó de ser el canal principal.
 3. **Teams webhook** (`_post_teams_webhook`, `_build_webhook_payload`).
 
 Las alertas se agrupan por supervisor/HRBP y se compilan a HTML con `_build_html_jefe`. Hay modos de prueba (`teams_testing_mode`, `vacaciones_test_email`, allowlist/blocklist) para no spamear destinatarios reales.
