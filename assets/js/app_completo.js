@@ -1657,16 +1657,12 @@ async function loadPersonas() {
 
 function renderPreview(data) {
   const frame = $('previewFrame');
-  const teamsNode = $('previewTeams');
   const subjNode = $('previewSubj');
   const toNode = $('previewTo');
   const metaNode = $('previewMeta');
   const titleNode = $('previewModalTitle');
   if (frame) {
     frame.srcdoc = data.mensaje_html || '<html><body style="padding:18px;font-family:Segoe UI,Arial,sans-serif">Sin previsualizacion disponible.</body></html>';
-  }
-  if (teamsNode) {
-    teamsNode.textContent = (data.mensaje_teams || 'Sin previsualización de Teams.').toString();
   }
   const camp = data.campania || {};
   const tramo = camp.trimestre ? ` | ${camp.trimestre}` : '';
