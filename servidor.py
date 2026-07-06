@@ -1517,6 +1517,23 @@ def _invalidate_data_caches():
 
     _MAESTRO_UNIV_CACHE.update({'ruta': None, 'mtime': None, 'df': None})
 
+    _KPIS_CACHE.update({'mtime': None, 'data': None})
+
+    # Eliminar fisicamente los archivos pickle de cache para evitar lectura de caches obsoletos
+    try:
+        p1 = os.path.join(DATAS_DIR, '__cache__', 'df_final_v2.pkl')
+        if os.path.exists(p1):
+            os.remove(p1)
+    except Exception as e:
+        print(f"Error removiendo df_final_v2.pkl: {e}")
+
+    try:
+        p2 = os.path.join(DATAS_DIR, '__cache__', f'{_OBJ_CACHE_VERSION}.pkl')
+        if os.path.exists(p2):
+            os.remove(p2)
+    except Exception as e:
+        print(f"Error removiendo {_OBJ_CACHE_VERSION}.pkl: {e}")
+
 
 
 
@@ -14058,6 +14075,25 @@ _pipeline_jobs       = {}
 _pipeline_lock       = threading.Lock()
 _pipeline_corriendo  = {'flag': False}
 
+# Adryan puede limitar/bloquear temporalmente logins automatizados si se
+# reciben muchos intentos seguidos (no es un tema de contrasena). Este freno
+# evita que un clic repetido en "Actualizar vacaciones"/"Actualizar maestro"
+# dispare mas intentos mientras ese posible bloqueo temporal sigue activo.
+_ADRYAN_COOLDOWN_SEG = 120
+_adryan_login_cooldown = {'hasta': 0.0}
+
+def _adryan_marcar_fallo_login():
+    _adryan_login_cooldown['hasta'] = time.time() + _ADRYAN_COOLDOWN_SEG
+
+def _adryan_cooldown_restante():
+    """Segundos restantes de enfriamiento, o 0 si ya se puede reintentar."""
+    restante = _adryan_login_cooldown['hasta'] - time.time()
+    return max(0, int(restante))
+
+def _es_fallo_login_adryan(lineas_str: str) -> bool:
+    s = lineas_str.lower()
+    return 'login fallido' in s or 'formulario de acceso' in s
+
 # Marcadores del log del pipeline -> (porcentaje, etiqueta para el front)
 _PIPE_MARCAS = [
     ('Crudo:',        15, 'Leyendo y limpiando el crudo de Adryan'),
@@ -14071,17 +14107,66 @@ _PIPE_MARCAS = [
     ('PIPELINE OK',  100, 'Listo'),
 ]
 
+_PIPELINE_PYTHON_CACHE = {'ruta': None, 'listo': False}
+
+def _python_tiene_modulos(py_exe, modulos):
+    try:
+        chk = _subprocess.run(
+            [py_exe, '-c', 'import ' + ', '.join(modulos)],
+            capture_output=True, timeout=15,
+        )
+        return chk.returncode == 0
+    except Exception:
+        return False
+
+def _candidatos_python_admin():
+    """Interpretes candidatos a tener playwright+xlwings instalados, buscando en
+    ubicaciones tipicas de instalacion en vez de asumir una ruta de una PC especifica
+    (asi el sistema no se rompe al migrar de computadora)."""
+    import shutil
+    candidatos = []
+    localapp = os.environ.get('LOCALAPPDATA', '')
+    if localapp:
+        for ver in ('313', '312', '311', '310', '39', '38'):
+            candidatos.append(os.path.join(localapp, 'Programs', 'Python', f'Python{ver}', 'python.exe'))
+    which = shutil.which('python')
+    if which:
+        candidatos.append(which)
+    candidatos.append(sys.executable)
+    vistos = set()
+    return [c for c in candidatos if c and os.path.isfile(c) and not (c in vistos or vistos.add(c))]
+
 def _pipeline_python():
-    """Python que corre el pipeline (el que tiene xlwings). Lo toma del config."""
+    """Python que corre el bot/pipeline (necesita playwright + xlwings). Se detecta
+    y valida automaticamente (no basta con que el archivo exista: se confirma que
+    los modulos importan) en vez de asumir la ruta grabada de la PC original, para
+    que el sistema no se rompa al migrar de computadora. Resultado cacheado en
+    memoria por el tiempo de vida del proceso del servidor."""
+    if _PIPELINE_PYTHON_CACHE['listo']:
+        return _PIPELINE_PYTHON_CACHE['ruta']
+
+    candidatos = []
     try:
         with open(_PIPELINE_CONFIG, 'r', encoding='utf-8') as f:
             _cfg = json.load(f)
-        py = (_cfg.get('integracion_front', {}) or {}).get('python_pipeline')
-        if py and os.path.isfile(py):
-            return py
+        py_config = (_cfg.get('integracion_front', {}) or {}).get('python_pipeline')
+        if py_config and os.path.isfile(py_config):
+            candidatos.append(py_config)
     except Exception:
         pass
-    return sys.executable
+    candidatos.extend(_candidatos_python_admin())
+
+    for py in candidatos:
+        if _python_tiene_modulos(py, ['playwright', 'xlwings']):
+            _PIPELINE_PYTHON_CACHE.update({'ruta': py, 'listo': True})
+            return py
+
+    # Ninguno tiene ambos modulos instalados: se usa el primero que exista igual,
+    # para que el error que se muestre (p.ej. "playwright no esta instalado") sea
+    # claro y accionable en vez de fallar por una ruta rota silenciosamente.
+    ruta = candidatos[0] if candidatos else sys.executable
+    _PIPELINE_PYTHON_CACHE.update({'ruta': ruta, 'listo': True})
+    return ruta
 
 # ─── Cache en memoria por mtime para los endpoints lentos de vacaciones ──────
 # El archivo vivo (Reporte ... Q2.xlsx, ~5.5 MB) tarda ~10-25 seg en parsear con
@@ -14400,6 +14485,12 @@ def _bot_adryan_descargar(job):
                 job['estado'] = 'error'
                 job['error'] = 'NECESITA_PASSWORD_ADRYAN'
                 job['necesita_password_adryan'] = True
+            elif _es_fallo_login_adryan(lineas_str):
+                _adryan_marcar_fallo_login()
+                job['estado'] = 'error'
+                job['error'] = ('Adryan rechazo el login automatico. Puede ser un bloqueo temporal '
+                                 'por intentos repetidos, no necesariamente la contrasena. '
+                                 f'El sistema esperara {_ADRYAN_COOLDOWN_SEG}s antes de permitir otro intento.')
             else:
                 job['estado'] = 'error'; job['error'] = 'Fallo la descarga de Adryan (revisa logs del bot).'
             return False
@@ -14415,6 +14506,10 @@ def _pipeline_worker(job_id):
         if not _bot_adryan_descargar(job):
             job['fin'] = time.time(); _pipeline_corriendo['flag'] = False
             return
+        # Chrome (Playwright) recien se cerro; dar un respiro antes de que el
+        # pipeline abra Excel por COM evita que xlwings no detecte el motor
+        # a tiempo (carga del sistema justo tras cerrar el navegador).
+        time.sleep(3)
     cmd = [_pipeline_python(), _PIPELINE_SCRIPT, '--oculto']
     if job.get('crudo'):
         cmd += ['--crudo', job['crudo']]
@@ -14443,6 +14538,10 @@ def _pipeline_worker(job_id):
         job['rc'] = proc.returncode
         if proc.returncode == 0:
             job['estado'] = 'done'; job['pct'] = 100; job['paso'] = 'Listo'
+            # Invalidar TODOS los caches para que el proximo request lea datos frescos
+            _invalidate_data_caches()
+            globals()['_CANDIDATOS_CACHE_DATA'] = None
+            globals()['_CANDIDATOS_CACHE_TIME'] = 0
             # el archivo recien publicado puede estar bloqueado un instante por OneDrive
             kp = None
             for _ in range(10):
@@ -14468,6 +14567,11 @@ def api_pipeline_run():
     archivo = request.files.get('archivo') or request.files.get('excel') or request.files.get('file')
     if archivo and archivo.filename and not archivo.filename.lower().endswith('.xlsx'):
         return jsonify({'ok': False, 'error': 'Solo se admite formato .xlsx'}), 400
+    val_descargar = (request.form.get('descargar') or request.values.get('descargar') or '').strip().lower()
+    if val_descargar in ('1', 'true', 'si', 'sí', 'on', 'yes'):
+        restante = _adryan_cooldown_restante()
+        if restante > 0:
+            return jsonify({'ok': False, 'error': f'Adryan rechazo un intento de login hace poco; espera {restante}s antes de reintentar.'}), 429
     with _pipeline_lock:
         if _pipeline_corriendo['flag']:
             return jsonify({'ok': False, 'error': 'Ya hay una actualizacion en curso.'}), 409
@@ -14533,6 +14637,10 @@ def _pipeline_maestro_worker(job_id):
         proc.wait()
         job['rc'] = proc.returncode
         if proc.returncode == 0:
+            # Invalidar caches antes de recargar el maestro
+            _invalidate_data_caches()
+            globals()['_CANDIDATOS_CACHE_DATA'] = None
+            globals()['_CANDIDATOS_CACHE_TIME'] = 0
             _cargar_tabla_maestra_jefes()
             job['estado'] = 'done'; job['pct'] = 100; job['paso'] = 'Maestro actualizado'
         else:
@@ -14542,6 +14650,11 @@ def _pipeline_maestro_worker(job_id):
             elif 'CryptUnprotectData' in lineas_str or 'no hay contrase' in lineas_str.lower():
                 job['error'] = 'NECESITA_PASSWORD_ADRYAN'
                 job['necesita_password_adryan'] = True
+            elif _es_fallo_login_adryan(lineas_str):
+                _adryan_marcar_fallo_login()
+                job['error'] = ('Adryan rechazo el login automatico. Puede ser un bloqueo temporal '
+                                 'por intentos repetidos, no necesariamente la contrasena. '
+                                 f'El sistema esperara {_ADRYAN_COOLDOWN_SEG}s antes de permitir otro intento.')
             else:
                 job['error'] = 'Fallo la descarga del maestro.'
             job['estado'] = 'error'
@@ -14553,6 +14666,9 @@ def _pipeline_maestro_worker(job_id):
 
 @app.route('/api/vacaciones/pipeline/maestro', methods=['POST'])
 def api_pipeline_maestro():
+    restante = _adryan_cooldown_restante()
+    if restante > 0:
+        return jsonify({'ok': False, 'error': f'Adryan rechazo un intento de login hace poco; espera {restante}s antes de reintentar.'}), 429
     with _pipeline_lock:
         if _pipeline_corriendo['flag']:
             return jsonify({'ok': False, 'error': 'Ya hay una actualizacion en curso.'}), 409

@@ -23,6 +23,7 @@ Uso:
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import shutil
 import sys
@@ -87,7 +88,13 @@ def publicar_salida(cfg, destino, log):
     carpeta_resp.mkdir(parents=True, exist_ok=True)
     publicados = []
     for tgt in objetivos:
-        tgt = Path(tgt)
+        # Las rutas relativas se resuelven contra la carpeta PIPELINE (portable entre
+        # computadoras); las absolutas (rutas grabadas de una maquina especifica) se
+        # usan tal cual solo si esa maquina/cuenta existe, si no se ignoran silenciosamente.
+        tgt = V.ruta_abs(tgt) if not Path(tgt).is_absolute() else Path(tgt)
+        if tgt.is_absolute() and not tgt.parent.parent.exists():
+            log.info("Objetivo de publicacion no aplica en esta maquina (no existe): %s", tgt)
+            continue
         try:
             tgt.parent.mkdir(parents=True, exist_ok=True)
             if tgt.exists():
@@ -173,7 +180,24 @@ def ejecutar_com(cfg, destino, filas, oculto, no_cerrar, log):
 
     visible = (not oculto) and cfg["excel"]["visible"]
     cerrar = (not no_cerrar) and cfg["excel"].get("cerrar_al_terminar", True)
-    app = xw.App(visible=visible, add_book=False)
+
+    # Salvaguarda: si el motor COM de Excel no queda activo al primer intento
+    # (xw.engines.active en None; llego a pasar por una resolucion de
+    # site-packages de usuario inconsistente, ya corregida instalando pywin32
+    # en el site-packages global del interprete), reintentar con pausa corta.
+    app = None
+    for _intento in range(3):
+        try:
+            app = xw.App(visible=visible, add_book=False)
+            break
+        except AttributeError as _e:
+            if _intento < 2:
+                espera = 3 * (_intento + 1)
+                log.warning("Motor COM de Excel no listo aun (%s), reintentando en %ds... (%d/3)",
+                            _e, espera, _intento + 1)
+                import time as _t; _t.sleep(espera)
+            else:
+                raise
     app.display_alerts = False
     app.screen_updating = False
     wb = None
@@ -370,6 +394,19 @@ def calcular_espejo(filas, meses):
     return bloque
 
 
+def _formato_general(rng):
+    """Aplica el formato 'General' de forma robusta ante Excel en otros idiomas.
+    Via COM, NumberFormat deberia aceptar siempre el literal en ingles 'General'
+    independientemente del idioma de la UI, pero en algunas instalaciones (Excel
+    en espanol) esa asignacion falla con 'No se puede asignar la propiedad
+    NumberFormat de la clase Range' y solo funciona con el equivalente localizado
+    via NumberFormatLocal."""
+    try:
+        rng.number_format = "General"
+    except Exception:
+        rng.api.NumberFormatLocal = "Estándar"
+
+
 def escribir_espejo(sh_piv, piv_cfg, bloque, tope, gen_last, log):
     """Escribe el bloque (cabecera + datos) en la tabla espejo L:S; matricula como TEXTO.
     Anade la columna de reconciliacion (VLOOKUP a BASE GENERAL) tras el Total general."""
@@ -383,7 +420,7 @@ def escribir_espejo(sh_piv, piv_cfg, bloque, tope, gen_last, log):
     # limpiar zona vieja (generosa) y fijar formatos antes de escribir
     sh_piv.range((fila_cab, c_ini), (tope + 10, c_ini + ncols + 1)).clear_contents()
     sh_piv.range((fila_cab, c_ini), (tope + 10, c_ini + 1)).number_format = "@"          # BP, Nombre
-    sh_piv.range((fila_cab, c_ini + 2), (tope + 10, c_ini + ncols - 1)).number_format = "General"
+    _formato_general(sh_piv.range((fila_cab, c_ini + 2), (tope + 10, c_ini + ncols - 1)))
     sh_piv.range((fila_cab, c_ini)).value = bloque
     # columna de reconciliacion (justo despues del Total general)
     c_rec = c_ini + ncols
@@ -491,7 +528,11 @@ def main():
             log.info("Crudo (forzado): %s", ruta_crudo)
         else:
             ent = cfg["entrada"]
-            ruta_crudo, cands = V.encontrar_crudo(ent["carpetas_descarga"], ent["patron_crudo"],
+            # La carpeta de Descargas configurada es de una computadora especifica;
+            # siempre se busca tambien en la de Descargas del usuario actual para que
+            # el pipeline funcione igual sin importar en que maquina/cuenta corra.
+            carpetas = list(dict.fromkeys(ent["carpetas_descarga"] + [os.path.expanduser("~/Downloads")]))
+            ruta_crudo, cands = V.encontrar_crudo(carpetas, ent["patron_crudo"],
                                                   ent.get("minutos_antiguedad_maxima"))
             log.info("Crudos encontrados: %d. Elegido: %s",
                      len(cands), Path(ruta_crudo).name if ruta_crudo else "NINGUNO")

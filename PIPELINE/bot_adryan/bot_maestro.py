@@ -3,7 +3,7 @@
 Bot que descarga el Maestro de Personal desde Adryan y lo sanitiza.
 
 Pasos:
-  1. Login en Adryan (reutiliza sesion guardada)
+  1. Login en Adryan (login fresco de un solo intento, igual que diagnostico_login.py)
   2. Personal > Maestro del Personal sin filtro > descargar
   3. Sanitizar el Excel descargado:
      - Eliminar los 3 primeros registros (dueños de la corporación)
@@ -35,6 +35,7 @@ LOG_DIR = os.path.join(AQUI, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 import guardar_password
+import bot_adryan  # reusa el login robusto (campo oculto duplicado + verificacion + reintentos)
 
 FILAS_DUENOS = 3
 EMAIL_SEGURO = "jlopezp@usil.edu.pe"
@@ -54,25 +55,6 @@ def log(msg: str):
 def cargar_config() -> dict:
     with open(CONFIG, encoding="utf-8") as f:
         return json.load(f)
-
-
-def esta_logueado(page) -> bool:
-    try:
-        return not page.get_by_role("textbox", name="Usuario Usuario").is_visible(timeout=4000)
-    except PWTimeout:
-        return True
-    except Exception:
-        return True
-
-
-def hacer_login(page, cfg, password):
-    log("Sesion no valida -> iniciando login...")
-    page.goto(cfg["url_login"], wait_until="domcontentloaded")
-    page.get_by_role("textbox", name="Usuario Usuario").fill(cfg["usuario"])
-    page.get_by_role("textbox", name="Contraseña Nueva Contraseña").fill(password)
-    page.get_by_role("button", name="INICIAR SESIÓN").click()
-    page.wait_for_load_state("networkidle")
-    log("Login enviado.")
 
 
 def _navegar_menu_maestro(page):
@@ -123,6 +105,15 @@ def descargar_maestro(page, cfg) -> str:
             _navegar_menu_maestro(page)
     else:
         _navegar_menu_maestro(page)
+
+    # Esperar a que la grilla cargue datos (filas en tbody)
+    log("Esperando a que la grilla cargue datos (filas en tbody)...")
+    try:
+        page.locator("tbody tr").first.wait_for(state="visible", timeout=45000)
+        log("Grilla con datos detectada. Esperando 3 segundos para estabilizacion...")
+        page.wait_for_timeout(3000)
+    except Exception as e:
+        log(f"Advertencia: tiempo de espera de datos agotado o error: {e}. Se intentara descargar igual.")
 
     log("Descargando maestro...")
     timeout_dl = max(cfg.get("timeout_ms", 60000), 120000)  # minimo 2 minutos
@@ -236,24 +227,17 @@ def main():
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(channel=cfg["canal_navegador"], headless=headless)
-        ctx_args = {"accept_downloads": True}
-        if os.path.exists(sesion):
-            ctx_args["storage_state"] = sesion
-            log("Cargando sesion guardada.")
-        context = browser.new_context(**ctx_args)
+        # Sin storage_state: igual que diagnostico_login.py, siempre login fresco
+        # directo a la pagina de login (reusar sesion guardada era lo sospechoso
+        # de causar los fallos de login).
+        context = browser.new_context(accept_downloads=True)
         context.set_default_timeout(cfg["timeout_ms"])
         page = context.new_page()
 
         try:
-            log("Verificando sesion...")
-            page.goto("https://adryancloudusil.sapia.com.pe/Home/IndexAdminDashboard",
-                       wait_until="domcontentloaded")
-            if not esta_logueado(page):
-                hacer_login(page, cfg, password)
-                context.storage_state(path=sesion)
-                log("Sesion guardada/actualizada.")
-            else:
-                log("Sesion valida reutilizada.")
+            bot_adryan.hacer_login(page, cfg, password)
+            context.storage_state(path=sesion)
+            log("Sesion guardada/actualizada.")
 
             destino = descargar_maestro(page, cfg)
             context.storage_state(path=sesion)

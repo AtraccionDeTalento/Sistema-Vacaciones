@@ -2,8 +2,10 @@
 """
 Bot que descarga el crudo de vacaciones (VACRptMotivo_*.xlsx) desde Adryan.
 
-- Reusa sesion guardada (sesion_adryan.json) para no loguearse cada vez.
-- Si la sesion caduco, se loguea con usuario + contrasena cifrada (DPAPI) y la regraba.
+- Login fresco de un solo intento en cada corrida (igual que diagnostico_login.py,
+  confirmado funcional): no reutiliza sesion guardada ni reintenta el login.
+- Se loguea con usuario + contrasena cifrada (DPAPI) y graba la sesion resultante
+  solo como registro (no se vuelve a cargar en la siguiente corrida).
 - Replica los pasos que grabaste: Personal -> Vacaciones por Motivo -> filtros -> Buscar -> descargar.
 - Guarda el archivo en la carpeta de Descargas que lee el pipeline.
 
@@ -14,7 +16,6 @@ Uso:
 import os
 import sys
 import json
-import time
 import datetime
 import traceback
 
@@ -32,6 +33,10 @@ LOG_DIR = os.path.join(AQUI, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 import guardar_password  # para leer la contrasena cifrada
+
+
+class SesionCaducada(RuntimeError):
+    """Adryan redirigio al login a mitad del flujo: hay que re-loguear y reintentar."""
 
 
 def log(msg: str):
@@ -55,24 +60,81 @@ def cargar_config() -> dict:
         return json.load(f)
 
 
-def esta_logueado(page) -> bool:
-    """True si NO se ve el campo de usuario (es decir, ya esta dentro)."""
+def en_login(page) -> bool:
+    """True si la pagina actual es (o redirigio a) la pantalla de login de Adryan."""
     try:
-        return not page.get_by_role("textbox", name="Usuario Usuario").is_visible(timeout=4000)
-    except PWTimeout:
-        return True
+        return page.get_by_role("textbox", name="Usuario Usuario").is_visible(timeout=1500)
     except Exception:
-        return True
+        return False
+
+
+def _campo_visible(page, locator_placeholder, locator_role, nombre_role):
+    """Adryan tiene un campo oculto (modal de cambio de clave) con el mismo
+    accessible-name que el campo visible de login, asi que get_by_role a veces
+    apunta al elemento equivocado. Se prioriza el placeholder, que es unico
+    al campo que realmente se ve en pantalla, y solo se cae al role si no
+    hay match por placeholder."""
+    por_placeholder = page.get_by_placeholder(locator_placeholder)
+    try:
+        if por_placeholder.count() > 0 and por_placeholder.first.is_visible():
+            return por_placeholder.first
+    except Exception:
+        pass
+    return page.get_by_role("textbox", name=nombre_role)
+
+
+def _intentar_login(page, cfg, password):
+    campo_usuario = _campo_visible(page, "Ingrese Usuario", None, "Usuario Usuario")
+    campo_clave = _campo_visible(page, "Ingrese Contraseña", None, "Contraseña Nueva Contraseña")
+
+    # Igual que el paso grabado: click antes de fill (asegura foco/bind de Angular
+    # antes de escribir) y una pausa corta para que el framework registre el value
+    # antes de enviar el formulario. Bajo carga de sistema (CPU ocupada, muchos
+    # procesos), el submit a veces viaja con los campos vacios porque Angular
+    # todavia no termino de bindear cuando se hace click en INICIAR SESION.
+    campo_usuario.click()
+    campo_usuario.fill("")
+    campo_usuario.fill(cfg["usuario"])
+    page.wait_for_timeout(400)
+
+    campo_clave.click()
+    campo_clave.fill("")
+    campo_clave.fill(password)
+    page.wait_for_timeout(400)
+
+    # Verificar que el value realmente quedo escrito antes de enviar. Reintentar
+    # varias veces (no solo una) porque bajo carga una sola pasada puede no alcanzar.
+    for _ in range(3):
+        if campo_usuario.input_value() == cfg["usuario"] and campo_clave.input_value() == password:
+            break
+        log("Los campos no registraron el valor escrito; reintentando fill...")
+        campo_usuario.fill(cfg["usuario"])
+        campo_clave.fill(password)
+        page.wait_for_timeout(500)
+
+    page.get_by_role("button", name="INICIAR SESIÓN").click()
+    page.wait_for_load_state("networkidle")
 
 
 def hacer_login(page, cfg, password):
-    log("Sesion no valida -> iniciando login...")
+    # Un solo intento, igual que diagnostico_login.py (confirmado funcional):
+    # reintentar el login varias veces seguidas es justo el patron que hace
+    # que Adryan limite/bloquee (deteccion anti-bot por volumen de intentos).
+    log("Iniciando login (intento unico, igual al diagnostico)...")
     page.goto(cfg["url_login"], wait_until="domcontentloaded")
-    page.get_by_role("textbox", name="Usuario Usuario").fill(cfg["usuario"])
-    page.get_by_role("textbox", name="Contraseña Nueva Contraseña").fill(password)
-    page.get_by_role("button", name="INICIAR SESIÓN").click()
     page.wait_for_load_state("networkidle")
-    log("Login enviado.")
+
+    _intentar_login(page, cfg, password)
+    page.wait_for_timeout(2000)
+
+    if en_login(page):
+        raise RuntimeError(
+            "Login fallido: Adryan sigue mostrando el formulario de acceso tras "
+            "el intento. La clave puede estar vencida, o Adryan esta limitando "
+            "temporalmente los intentos de login automatico (confirma primero "
+            "si el login manual funciona antes de tocar la contrasena guardada)."
+        )
+    log("Login verificado OK.")
 
 
 def ir_al_reporte(page, cfg):
@@ -143,9 +205,18 @@ def buscar_y_descargar(page, cfg) -> str:
         raise RuntimeError("No se encontro el boton de descarga Excel en la pagina despues de 60s.") from e
 
     log("Boton detectado, iniciando descarga...")
-    with page.expect_download(timeout=timeout_dl) as dl_info:
-        page.locator(".mr-3").click()
-    download = dl_info.value
+    try:
+        with page.expect_download(timeout=timeout_dl) as dl_info:
+            page.locator(".mr-3").first.click()
+        download = dl_info.value
+    except PWTimeout:
+        # Caso tipico: Adryan invalido la sesion a mitad del flujo y la pagina
+        # redirigio al login, por eso la descarga nunca llega.
+        if en_login(page):
+            raise SesionCaducada(
+                "Adryan expulso la sesion al hacer la descarga (redirigio al login)."
+            )
+        raise
 
     carpeta = _carpeta_descarga(cfg)
     nombre = download.suggested_filename or f"{cfg['patron_crudo']}_{datetime.datetime.now():%m_%d_%Y %H_%M_%S}.xlsx"
@@ -195,35 +266,25 @@ def main():
     with sync_playwright() as pw:
         # Los args evitan que Chrome muestre ventanas fantasma en algunos entornos Windows
         browser = pw.chromium.launch(
-            channel=cfg["canal_navegador"], 
+            channel=cfg["canal_navegador"],
             headless=headless,
             args=["--disable-gpu", "--window-position=-32000,-32000", "--hide-scrollbars"]
         )
-        ctx_args = {"accept_downloads": True}
-        if os.path.exists(sesion):
-            ctx_args["storage_state"] = sesion
-            log("Cargando sesion guardada.")
-        context = browser.new_context(**ctx_args)
+        # Sin storage_state: igual que diagnostico_login.py, siempre login fresco
+        # directo a la pagina de login. Reutilizar sesion guardada (y verificarla
+        # yendo primero al dashboard) es lo que se sospechaba causaba los fallos.
+        context = browser.new_context(accept_downloads=True)
         context.set_default_timeout(cfg["timeout_ms"])
         page = context.new_page()
 
         try:
-            # 1) Verificar sesion: ir al dashboard; si redirige al login, autenticar.
-            log("Verificando sesion...")
-            page.goto("https://adryancloudusil.sapia.com.pe/Home/IndexAdminDashboard",
-                      wait_until="domcontentloaded")
-            if not esta_logueado(page):
-                hacer_login(page, cfg, password)
-                context.storage_state(path=sesion)  # regraba sesion fresca
-                log("Sesion guardada/actualizada.")
-            else:
-                log("Sesion valida reutilizada.")
+            hacer_login(page, cfg, password)
+            context.storage_state(path=sesion)
+            log("Sesion guardada/actualizada.")
 
-            # 2) Navegar al reporte y descargar.
             ir_al_reporte(page, cfg)
             fijar_filtros(page, cfg)
             destino = buscar_y_descargar(page, cfg)
-            # refresca cookies por si rotaron
             context.storage_state(path=sesion)
             log("OK - descarga completada.")
             print(f"ARCHIVO_DESCARGADO={destino}")

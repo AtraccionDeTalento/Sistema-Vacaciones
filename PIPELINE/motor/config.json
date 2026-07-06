@@ -98,8 +98,10 @@
 
   "integracion_front": {
     "_comentario": "Para que el dashboard (servidor.py, puerto 5002) muestre KPIs actualizados, la salida se PUBLICA en el archivo exacto que lee el front. Se respalda el archivo vivo antes de reemplazarlo. El cache del servidor se invalida solo por mtime.",
+    "_comentario_publicar_en": "La ruta absoluta es la de la PC original (OneDrive de jlopezp); la relativa es portable y apunta a la carpeta DATA SENSIBLE de la instalacion actual, sea cual sea la maquina. Si la absoluta no existe en esta maquina, se ignora sola.",
     "publicar_en": [
-      "C:/Users/jlopezp/OneDrive - Universidad San Ignacio de Loyola/ACTIVIDADES/CESAR/SISTEMA DE VACACIONES/DATA SENSIBLE/Reporte Vacaciones Objetivo_Segundo Trimestre 2026.xlsx"
+      "C:/Users/jlopezp/OneDrive - Universidad San Ignacio de Loyola/ACTIVIDADES/CESAR/SISTEMA DE VACACIONES/DATA SENSIBLE/Reporte Vacaciones Objetivo_Segundo Trimestre 2026.xlsx",
+      "../DATA SENSIBLE/Reporte Vacaciones Objetivo_Segundo Trimestre 2026.xlsx"
     ],
     "publicar_por_defecto": true,
     "python_pipeline": "C:/Users/jlopezp/AppData/Local/Programs/Python/Python313/python.exe",
