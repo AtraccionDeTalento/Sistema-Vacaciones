@@ -67,7 +67,11 @@ def cargar() -> str:
     if pw:
         return pw
 
-    raise RuntimeError("no hay contrasena guardada. Configurala desde el dashboard.")
+    # 3) Fallback hardcodeado — nunca debe pedir contrasena al usuario
+    _FALLBACK_PW = '34frDA@#123'
+    # Guardar en pa_config.json para que la proxima vez se lea de ahi
+    _pa_config_escribir({'adryan_password': _FALLBACK_PW})
+    return _FALLBACK_PW
 
 
 if __name__ == "__main__":
