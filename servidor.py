@@ -14183,13 +14183,43 @@ _KPIS_LOCK    = threading.Lock()
 _META_CACHE   = {'mtime': None, 'data': None}
 _META_LOCK    = threading.Lock()
 
+def _bg_col_map(header_row):
+    """Resuelve los indices de columna de BASE GENERAL buscando el TEXTO del encabezado
+    (fila 2), nunca una posicion fija. Si alguien agrega/reordena columnas en la plantilla
+    de Excel (como paso con 'Activo /Cesado' y 'Jefe Directo'), esto sigue ubicando la
+    columna correcta en vez de leer silenciosamente el dato equivocado."""
+    def _find(*keys):
+        for i, val in enumerate(header_row or []):
+            if val is None:
+                continue
+            h = str(val).strip().lower()
+            for k in keys:
+                if k in h:
+                    return i
+        return None
+    return {
+        'matricula':    _find('matr'),
+        'nombre':       _find('apellidos'),
+        'tipo':         _find('tipo trabajador'),
+        'puesto':       _find('nombre puesto'),
+        'unidad_negocio': _find('sucursal'),
+        'hrbp':         _find('hrbp'),
+        'departamento': _find('nombre departamento'),
+        'area':         _find('nombre area'),
+        'vencidas':     _find('vencidas'),
+        'pendiente':    _find('pendiente'),
+        'truncos':      _find('truncos'),
+        'suma_total':   _find('suma de'),
+        'objetivo':     _find('objetivo'),
+        'registradas':  _find('registrad'),
+    }
+
+
 def _meta_vac_data():
     """Lee BASE GENERAL del archivo vivo y arma conteos de colaboradores + filas por
     segmento (mismo origen que el avance, para que TODO sea consistente). Cache por mtime.
 
-    Columnas BASE GENERAL (0-based): 0 Matricula, 1 Nombre, 2 Tipo, 3 Puesto, 6 HRBP,
-    7 Departamento, 8 Area, 12 Vencidas, 13 Pendiente, 15 Suma Dias Total, 16 Objetivo,
-    19 Registradas."""
+    Las columnas se resuelven por encabezado (ver _bg_col_map), no por posicion fija."""
     cur_mt = _vac_mtime()
     with _META_LOCK:
         if _META_CACHE['mtime'] == cur_mt and _META_CACHE['data'] is not None:
@@ -14241,39 +14271,44 @@ def _meta_vac_data():
                 def _num(v):
                     try: return float(v) if v is not None else 0.0
                     except Exception: return 0.0
+                header = next(g.iter_rows(min_row=2, max_row=2, values_only=True), [])
+                c = _bg_col_map(header)
+                def _v(r, key):
+                    i = c.get(key)
+                    return r[i] if (i is not None and i < len(r)) else None
                 for r in g.iter_rows(min_row=3, values_only=True):
                     if not r:
                         continue
-                    mat = r[0] if len(r) > 0 else None
+                    mat = _v(r, 'matricula')
                     if mat is None or str(mat).strip() == '':
                         continue
                     mat_str = str(int(float(mat))) if str(mat).replace('.','').isdigit() else str(mat).strip()
                     bg_mats.add(mat_str)
-                    obj = _num(r[16]) if len(r) > 16 else 0.0
-                    reg  = _num(r[19]) if len(r) > 19 else 0.0
+                    obj = _num(_v(r, 'objetivo'))
+                    reg = _num(_v(r, 'registradas'))
                     if obj <= 0:
                         if reg > 0:
                             rows.append({
                                 'matricula': str(mat).strip(),
-                                'nombre': r[1] if len(r) > 1 and r[1] else '',
-                                'tipo': r[2] if len(r) > 2 and r[2] else '',
-                                'puesto': r[3] if len(r) > 3 and r[3] else '',
-                                'unidad_negocio': str(r[4]).strip() if len(r) > 4 and r[4] else '',
-                                'hrbp': r[6] if len(r) > 6 and r[6] else '',
-                                'departamento': r[7] if len(r) > 7 and r[7] else '',
-                                'area': r[8] if len(r) > 8 and r[8] else '',
+                                'nombre': _v(r, 'nombre') or '',
+                                'tipo': _v(r, 'tipo') or '',
+                                'puesto': _v(r, 'puesto') or '',
+                                'unidad_negocio': str(_v(r, 'unidad_negocio') or '').strip(),
+                                'hrbp': _v(r, 'hrbp') or '',
+                                'departamento': _v(r, 'departamento') or '',
+                                'area': _v(r, 'area') or '',
                                 'objetivo': 0.0, 'dias_gozados': reg,
-                                'total_dias': _num(r[15]) if len(r) > 15 else 0.0,
-                                'vencidas': _num(r[12]) if len(r) > 12 else 0.0,
-                                'pendientes': _num(r[13]) if len(r) > 13 else 0.0,
+                                'total_dias': _num(_v(r, 'suma_total')),
+                                'vencidas': _num(_v(r, 'vencidas')),
+                                'pendientes': _num(_v(r, 'pendiente')),
                                 'meta_pct': 0.0,
                                 'cumplio': False, 'oblig_pend': False,
                                 'sin_iniciar': False, 'casi_listo': False,
                                 'sin_meta_con_vac': True,
                             })
                         continue
-                    venc = _num(r[12]) if len(r) > 12 else 0.0
-                    pend = _num(r[13]) if len(r) > 13 else 0.0
+                    venc = _num(_v(r, 'vencidas'))
+                    pend = _num(_v(r, 'pendiente'))
                     cumplio = reg >= obj
                     oblig_pend = (not cumplio) and (venc > 0 or pend > 0)
                     meta_pct = (reg / obj) if obj > 0 else 0.0
@@ -14281,15 +14316,15 @@ def _meta_vac_data():
                     casi_listo = (not cumplio) and 0.75 <= meta_pct < 1.0
                     rows.append({
                         'matricula': str(mat).strip(),
-                        'nombre': r[1] if len(r) > 1 and r[1] else '',
-                        'tipo': r[2] if len(r) > 2 and r[2] else '',
-                        'puesto': r[3] if len(r) > 3 and r[3] else '',
-                        'unidad_negocio': str(r[4]).strip() if len(r) > 4 and r[4] else '',
-                        'hrbp': r[6] if len(r) > 6 and r[6] else '',
-                        'departamento': r[7] if len(r) > 7 and r[7] else '',
-                        'area': r[8] if len(r) > 8 and r[8] else '',
+                        'nombre': _v(r, 'nombre') or '',
+                        'tipo': _v(r, 'tipo') or '',
+                        'puesto': _v(r, 'puesto') or '',
+                        'unidad_negocio': str(_v(r, 'unidad_negocio') or '').strip(),
+                        'hrbp': _v(r, 'hrbp') or '',
+                        'departamento': _v(r, 'departamento') or '',
+                        'area': _v(r, 'area') or '',
                         'objetivo': obj, 'dias_gozados': reg,
-                        'total_dias': _num(r[15]) if len(r) > 15 else 0.0,
+                        'total_dias': _num(_v(r, 'suma_total')),
                         'vencidas': venc, 'pendientes': pend,
                         'meta_pct': meta_pct,
                         'cumplio': cumplio, 'oblig_pend': oblig_pend,
@@ -15059,46 +15094,78 @@ def _compute_avance(ruta):
 
         if 'BASE GENERAL' in wb.sheetnames:
             g = wb['BASE GENERAL']
-            # Fila 1 = totales globales (toda la base, incluido colegio sin meta)
+            # Columnas resueltas por encabezado (fila 2), nunca por posicion fija: la
+            # plantilla de Excel ha ganado columnas nuevas ('Activo /Cesado', 'Jefe
+            # Directo') que corren todo lo de despues, y volvera a pasar.
+            header = next(g.iter_rows(min_row=2, max_row=2, values_only=True), [])
+            c = _bg_col_map(header)
+            def _v(row, key):
+                i = c.get(key)
+                return row[i] if (i is not None and i < len(row)) else None
+            # Fila 1 = totales globales que trae la propia plantilla (toda la base,
+            # incluido colegio sin meta). Se leen de la misma columna resuelta arriba,
+            # no de una celda fija (Q1/T1/W1), porque esa tambien se corrio.
             row1 = next(g.iter_rows(min_row=1, max_row=1, values_only=True))
-            glob['meta_total']        = _n(row1[16])   # Q1
-            glob['registrado_total']  = _n(row1[19])   # T1
-            glob['avance_todo']       = _n(row1[22])   # W1 (T1/Q1)
-            # Indices de columna en BASE GENERAL (cabecera fila 2, datos fila 3+)
-            # 0 Matricula · 1 Apellidos y Nombres · 3 Nombre Puesto · 6 HRBP
-            # 7 Nombre Departamento · 8 Nombre Area · 16 Objetivo · 19 Registradas
+            glob['meta_total']        = _n(_v(row1, 'objetivo'))
+            glob['registrado_total']  = _n(_v(row1, 'registradas'))
+            glob['avance_todo']       = (
+                (glob['registrado_total'] / glob['meta_total'])
+                if glob['meta_total'] else None
+            )
+            # Totales globales "limpios": el avance real solo debe considerar a quienes
+            # tienen meta asignada. Colegio (y cualquier otro sin objetivo) no tiene meta,
+            # asi que sus dias registrados no deben inflar el numerador del avance global.
+            glob_meta_con = 0.0
+            glob_reg_con  = 0.0
+            glob_reg_sin  = 0.0
+            glob_n_sin    = 0
             for row in g.iter_rows(min_row=3, values_only=True):
-                bp = _canon_bp(row[6] if len(row) > 6 else '')
-                if not bp:
-                    continue
-                mat = str(row[0]).strip() if row[0] is not None else ''
+                mat = str(_v(row, 'matricula') or '').strip()
                 if not mat: continue
-                
+
                 # Excluir si no está en maestro (cesado)
                 if mats_activas is not None:
                     mat_cln = str(int(float(mat))) if str(mat).replace('.','').isdigit() else mat
                     if mat_cln not in mats_activas:
                         continue
 
-                meta_p = _num(row[16]) if len(row) > 16 else 0.0
-                reg_p  = _num(row[19]) if len(row) > 19 else 0.0
+                meta_p = _num(_v(row, 'objetivo'))
+                reg_p  = _num(_v(row, 'registradas'))
+
+                if meta_p > 0:
+                    glob_meta_con += meta_p
+                    glob_reg_con  += reg_p
+                elif reg_p > 0:
+                    glob_reg_sin += reg_p
+                    glob_n_sin   += 1
+
+                bp = _canon_bp(_v(row, 'hrbp'))
+                if not bp:
+                    continue
                 a = acc[bp]
                 a['n'] += 1
                 a['meta'] += meta_p
                 a['registro'] += reg_p
                 a['personas'].append({
                     'matricula':    mat,
-                    'nombre':       str(row[1]).strip() if len(row) > 1 and row[1] is not None else '',
-                    'puesto':       str(row[3]).strip() if len(row) > 3 and row[3] is not None else '',
-                    'unidad_negocio': str(row[4]).strip() if len(row) > 4 and row[4] is not None else '',
-                    'departamento': str(row[7]).strip() if len(row) > 7 and row[7] is not None else '',
-                    'gerencia':     str(row[7]).strip() if len(row) > 7 and row[7] is not None else '',
-                    'area':         str(row[8]).strip() if len(row) > 8 and row[8] is not None else '',
+                    'nombre':       str(_v(row, 'nombre') or '').strip(),
+                    'puesto':       str(_v(row, 'puesto') or '').strip(),
+                    'unidad_negocio': str(_v(row, 'unidad_negocio') or '').strip(),
+                    'departamento': str(_v(row, 'departamento') or '').strip(),
+                    'gerencia':     str(_v(row, 'departamento') or '').strip(),
+                    'area':         str(_v(row, 'area') or '').strip(),
                     'meta':         meta_p,
                     'gozado':       reg_p,
                     'avance':       (reg_p / meta_p) if meta_p else None,
                     'registros':    registros_por_mat.get(mat, []),
                 })
+
+            # Avance "limpio": solo colaboradores con meta asignada (excluye colegio).
+            glob['dias_meta_total']       = glob_meta_con
+            glob['dias_gozados_con_meta'] = glob_reg_con
+            glob['avance_con_meta']       = (glob_reg_con / glob_meta_con) if glob_meta_con > 0 else 0.0
+            glob['dias_gozados_sin_meta'] = glob_reg_sin
+            glob['sin_meta_con_vac']      = glob_n_sin
         wb.close()
 
         # Resumen por BP + detalle. Solo BPs con al menos una persona.

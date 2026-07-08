@@ -118,9 +118,25 @@ def escribir_estado(destino, resumen, log):
         kp = {}
         if "BASE GENERAL" in wb.sheetnames:
             g = wb["BASE GENERAL"]
-            kp["meta_total"] = g["Q1"].value
-            kp["registrado_total"] = g["T1"].value
-            kp["avance"] = g["W1"].value
+            # Columnas resueltas por texto de encabezado (fila 2), no por celda fija
+            # (Q1/T1/W1): la plantilla ha ganado columnas nuevas que corren todo lo de
+            # despues, y una celda fija termina leyendo el total de otra columna.
+            header = [c.value for c in next(g.iter_rows(min_row=2, max_row=2))]
+            def _find(*keys):
+                for i, val in enumerate(header):
+                    if val is None:
+                        continue
+                    h = str(val).strip().lower()
+                    if any(k in h for k in keys):
+                        return i + 1  # openpyxl.cell() es 1-based
+                return None
+            col_obj = _find('objetivo')
+            col_reg = _find('registrad')
+            meta_total = g.cell(row=1, column=col_obj).value if col_obj else None
+            registrado_total = g.cell(row=1, column=col_reg).value if col_reg else None
+            kp["meta_total"] = meta_total
+            kp["registrado_total"] = registrado_total
+            kp["avance"] = (registrado_total / meta_total) if (meta_total and registrado_total is not None) else None
         if "R_Cumplimiento" in wb.sheetnames:
             kp["avance_cumplimiento"] = wb["R_Cumplimiento"]["E9"].value
         wb.close()

@@ -172,8 +172,8 @@ def fijar_filtros(page, cfg):
     # Fecha Término
     page.get_by_role("textbox", name="Fecha Término").click(force=True)
     page.wait_for_timeout(1000)  # dar tiempo a que se abra el segundo calendario
-    page.get_by_role("combobox").nth(2).select_option(cfg.get("mes_termino", "7"))
-    page.get_by_role("gridcell", name=cfg.get("dia_termino", "31/08/")).click(force=True)
+    page.get_by_role("combobox").nth(2).select_option(cfg.get("mes_termino", "6"))
+    page.get_by_role("gridcell", name=cfg.get("dia_termino", "30/07/")).click(force=True)
 
     page.wait_for_timeout(1000)
     log("Fechas fijadas.")

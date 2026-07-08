@@ -811,28 +811,56 @@ function computeMetaKpis(rows) {
 }
 
 function renderAvanceKpi(kp) {
-  const av = (kp && kp.avance != null && !isNaN(kp.avance)) ? Number(kp.avance) : null;
-  const num = $('kAlerta'), bar = $('kAvanceBar'), foot = $('kAvanceFoot');
+  const metaTotal  = (kp && kp.dias_meta_total != null) ? Number(kp.dias_meta_total) : null;
+  const gozConMeta = (kp && kp.dias_gozados_con_meta != null) ? Number(kp.dias_gozados_con_meta) : null;
+  // Avance real = solo colaboradores CON meta asignada (colegio/sin meta no debe inflarlo).
+  // Fallback a kp.avance (crudo) si el desglose con/sin meta aun no llego.
+  const av = (metaTotal != null && gozConMeta != null && metaTotal > 0)
+    ? gozConMeta / metaTotal
+    : ((kp && kp.avance != null && !isNaN(kp.avance)) ? Number(kp.avance) : null);
+
+  const num = $('kAlerta'), bar = $('kAvanceBar'), barColegio = $('kAvanceBarColegio'), foot = $('kAvanceFoot');
   if (num) num.textContent = (av == null) ? '—' : (av * 100).toFixed(1) + '%';
+
+  const pctCon = (av == null) ? 0 : Math.max(0, Math.min(100, av * 100));
+  // Segmento colegio: días de quienes NO tienen meta pero igual salieron, pegado
+  // justo despues del segmento principal (expresado como % del mismo total de meta).
+  const diasSinMeta   = Number((kp && kp.dias_gozados_sin_meta) || 0);
+  const sinMetaN      = Number((kp && kp.sin_meta_con_vac) || 0);
+  const pctColegioRaw = (metaTotal && metaTotal > 0) ? (diasSinMeta / metaTotal * 100) : 0;
+  const pctColegio    = Math.max(0, Math.min(100 - pctCon, pctColegioRaw));
+
   if (bar) {
     requestAnimationFrame(() => {
-      const pct = (av == null) ? 0 : Math.max(0, Math.min(100, av * 100));
-      bar.style.width = pct.toFixed(1) + '%';
+      bar.style.width = pctCon.toFixed(1) + '%';
       // Color-code: red < 70%, yellow 70-90%, green > 90%
       bar.classList.remove('bar-red', 'bar-yellow', 'bar-green');
-      if (pct < 70) bar.classList.add('bar-red');
-      else if (pct < 90) bar.classList.add('bar-yellow');
+      if (pctCon < 70) bar.classList.add('bar-red');
+      else if (pctCon < 90) bar.classList.add('bar-yellow');
       else bar.classList.add('bar-green');
+    });
+  }
+  if (barColegio) {
+    requestAnimationFrame(() => {
+      barColegio.style.left = pctCon.toFixed(1) + '%';
+      barColegio.style.width = pctColegio.toFixed(1) + '%';
+      barColegio.title = sinMetaN > 0
+        ? `+${sinMetaN.toLocaleString('es-PE')} colaboradores sin meta (colegio) tomaron ${Math.round(diasSinMeta).toLocaleString('es-PE')} días`
+        : '';
     });
   }
   // Also color the number
   if (num && av != null) {
-    const pct = av * 100;
-    if (pct < 70) num.style.color = '#c0392b';
-    else if (pct < 90) num.style.color = '#e08a1e';
+    if (pctCon < 70) num.style.color = '#c0392b';
+    else if (pctCon < 90) num.style.color = '#e08a1e';
     else num.style.color = '#1f9d55';
   }
-  if (foot && kp && kp.registrado_total != null && kp.meta_total != null) {
+  if (foot && metaTotal != null && gozConMeta != null) {
+    let txt = Math.round(gozConMeta).toLocaleString('es-PE') + ' / ' +
+              Math.round(metaTotal).toLocaleString('es-PE') + ' días';
+    if (sinMetaN > 0) txt += ' · +' + sinMetaN.toLocaleString('es-PE') + ' colegio (sin meta)';
+    foot.textContent = txt;
+  } else if (foot && kp && kp.registrado_total != null && kp.meta_total != null) {
     foot.textContent = Math.round(kp.registrado_total).toLocaleString('es-PE') + ' / ' +
                        Math.round(kp.meta_total).toLocaleString('es-PE') + ' días';
   } else if (foot) {
@@ -905,12 +933,12 @@ async function renderKpiCards(retries = 3, delayMs = 3000) {
         const qStart = new Date(year, qStartMonth, 1);
 
         // Fecha de cierre de campaña: pa_config puede sobreescribirla vía state.fechaCierreCampana.
-        // Por defecto Q2 va hasta el 31 de agosto (2 meses adicionales de ejecución).
+        // Por defecto Q2 va hasta el 30 de julio (1 mes adicional de ejecución).
         let qEnd;
         if (state.fechaCierreCampana) {
           qEnd = new Date(state.fechaCierreCampana);
         } else if (quarter === 2) {
-          qEnd = new Date(year, 7, 31); // 31 de agosto
+          qEnd = new Date(year, 6, 30); // 30 de julio
         } else if (quarter === 1) {
           qEnd = new Date(year, 4, 31); // 31 de mayo
         } else if (quarter === 3) {

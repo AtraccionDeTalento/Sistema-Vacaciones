@@ -69,7 +69,7 @@
       <span class="kcard-icon">📈</span>
       <span class="kcard-label" id="lblSinVac">AVANCE DE META</span>
       <b class="kcard-num" id="kAlerta"><span class="spin"></span></b>
-      <div class="kcard-bar"><div class="kcard-bar-fill" id="kAvanceBar"></div></div>
+      <div class="kcard-bar"><div class="kcard-bar-fill" id="kAvanceBar"></div><div class="kcard-bar-fill-colegio" id="kAvanceBarColegio"></div></div>
       <span class="kcard-foot" id="kAvanceFoot">en tiempo real</span>
       <div class="kcard-prediction" id="kPredictionWrap">
         <span class="kcard-pred-icon">🔮</span>
@@ -480,7 +480,7 @@
       <div class="av-main">
         <div class="av-main-top"><span class="av-big" id="avTodo">—</span>
           <span class="av-big-lbl">avance global<br>(toda la base)</span></div>
-        <div class="av-bar av-bar-lg"><div class="av-bar-fill" id="avTodoBar"></div></div>
+        <div class="av-bar av-bar-lg"><div class="av-bar-fill" id="avTodoBar"></div><div class="av-bar-fill-colegio" id="avTodoBarColegio"></div></div>
         <div class="av-foot"><b id="avReg">—</b> de <b id="avMeta">—</b> días registrados</div>
       </div>
       <div class="av-side">
@@ -511,9 +511,12 @@
 .av-side{width:190px;background:#0f6ea5;color:#fff;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;justify-content:center}
 .av-mid{font-size:34px;font-weight:800;line-height:1}
 .av-mid-lbl{font-size:11px;opacity:.9;margin-top:4px}
-.av-bar{height:12px;background:#e3edf4;border-radius:8px;overflow:hidden}
+.av-bar{position:relative;height:12px;background:#e3edf4;border-radius:8px;overflow:hidden}
 .av-bar-lg{height:16px;margin:12px 0 8px}
 .av-bar-fill{height:100%;width:0;background:#1f9d55;transition:width 1s cubic-bezier(.22,.61,.36,1)}
+.av-bar-fill-colegio{position:absolute;top:0;left:0;height:100%;width:0;
+  background:repeating-linear-gradient(45deg,#8e6fc9,#8e6fc9 4px,#a688d9 4px,#a688d9 8px);
+  transition:width 1s cubic-bezier(.22,.61,.36,1),left 1s cubic-bezier(.22,.61,.36,1)}
 .av-foot{font-size:12.5px;color:#5a6b7b}
 .av-bp-title{font-size:13px;font-weight:700;color:#143b5e}
 .av-bp-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:6px 0 10px;flex-wrap:wrap}
