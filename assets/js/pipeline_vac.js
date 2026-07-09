@@ -374,35 +374,24 @@
   }
 
   function pintarGlobal(G, por_bp_filtrado) {
-    // Avance real: solo colaboradores CON meta asignada (colegio/sin meta no lo infla).
-    // Fallback a avance_todo (crudo) si el backend aun no publico el desglose nuevo.
-    var tieneDesglose = G.dias_meta_total != null && G.dias_gozados_con_meta != null && G.dias_meta_total > 0;
-    var avanceLimpio = tieneDesglose ? (G.dias_gozados_con_meta / G.dias_meta_total) : G.avance_todo;
-    var metaTotal = tieneDesglose ? G.dias_meta_total : G.meta_total;
-    var regTotal  = tieneDesglose ? G.dias_gozados_con_meta : G.registrado_total;
+    // Avance = el mismo total crudo que Excel (toda la base, sin excluir colegio/cesados/fecha).
+    var avanceTotal = G.avance_todo;
+    var metaTotal = G.meta_total;
+    var regTotal  = G.registrado_total;
 
-    $('avTodo').textContent = fpct(avanceLimpio);
+    $('avTodo').textContent = fpct(avanceTotal);
     $('avReg').textContent = fnum(regTotal);
     $('avMeta').textContent = fnum(metaTotal);
     $('avBP').textContent = fpct(recalcularGlobalBP(por_bp_filtrado));
 
-    var pctCon = Math.max(0, Math.min(100, (avanceLimpio || 0) * 100));
-    setTimeout(function () { if ($('avTodoBar')) $('avTodoBar').style.width = pctCon + '%'; }, 60);
+    var pct = Math.max(0, Math.min(100, (avanceTotal || 0) * 100));
+    setTimeout(function () { if ($('avTodoBar')) $('avTodoBar').style.width = pct + '%'; }, 60);
 
-    // Segmento colegio: dias de quienes no tienen meta pero igual salieron.
+    // Ya no hay segmento aparte para colegio: esta incluido en el numero principal.
     var barColegio = $('avTodoBarColegio');
     if (barColegio) {
-      var diasSinMeta = Number(G.dias_gozados_sin_meta || 0);
-      var sinMetaN = Number(G.sin_meta_con_vac || 0);
-      var pctColegioRaw = (metaTotal > 0) ? (diasSinMeta / metaTotal * 100) : 0;
-      var pctColegio = Math.max(0, Math.min(100 - pctCon, pctColegioRaw));
-      barColegio.title = sinMetaN > 0
-        ? ('+' + sinMetaN.toLocaleString('es-PE') + ' colaboradores sin meta (colegio) tomaron ' + Math.round(diasSinMeta).toLocaleString('es-PE') + ' días')
-        : '';
-      setTimeout(function () {
-        barColegio.style.left = pctCon + '%';
-        barColegio.style.width = pctColegio + '%';
-      }, 60);
+      barColegio.title = '';
+      setTimeout(function () { barColegio.style.width = '0%'; }, 60);
     }
   }
 

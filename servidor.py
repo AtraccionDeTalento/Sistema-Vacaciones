@@ -14451,15 +14451,21 @@ def _vac_mtime():
 
 def _kpis_vacaciones():
     """KPIs de avance de meta. Prefiere el JSON local del pipeline (rapido, sin lock de
-    OneDrive); si no existe, lee el Excel vivo con cache por mtime."""
+    OneDrive) SOLO si no esta desactualizado respecto al Excel vivo (compara mtimes);
+    si el Excel cambio despues de que se genero ese JSON, se ignora y se lee el Excel
+    directamente. Sin este chequeo, reemplazar el archivo de datos no tenia ningun
+    efecto porque este JSON viejo seguia ganando siempre."""
     jpath = os.path.join(SCRIPT_DIR, 'PIPELINE', 'estado_pipeline.json')
     try:
         if os.path.isfile(jpath):
-            with open(jpath, 'r', encoding='utf-8') as f:
-                kp = json.load(f)
-            out = {k: kp.get(k) for k in ('meta_total', 'registrado_total', 'avance', 'avance_cumplimiento')}
-            if out.get('avance') is not None or out.get('registrado_total') is not None:
-                return out
+            vac_mt = _vac_mtime()
+            json_mt = os.path.getmtime(jpath)
+            if vac_mt is None or json_mt >= vac_mt:
+                with open(jpath, 'r', encoding='utf-8') as f:
+                    kp = json.load(f)
+                out = {k: kp.get(k) for k in ('meta_total', 'registrado_total', 'avance', 'avance_cumplimiento')}
+                if out.get('avance') is not None or out.get('registrado_total') is not None:
+                    return out
     except Exception as e:
         print('[PIPE-KPI] json err:', e)
     # Fallback: Excel vivo. Aqui cae el costo de ~10-25s la PRIMERA vez por mtime.
@@ -14488,11 +14494,19 @@ def _kpis_vacaciones():
             kp = {}
             if 'BASE GENERAL' in wb.sheetnames:
                 g = wb['BASE GENERAL']
-                # leer la fila 1 una sola vez en vez de 3 accesos a cell()
+                # Columnas por encabezado (fila 2), no por posicion fija (Q1/T1/W1): la
+                # plantilla ha ganado columnas nuevas y eso corrio todo lo de despues.
+                header = next(g.iter_rows(min_row=2, max_row=2, values_only=True), [])
+                c = _bg_col_map(header)
                 row1 = next(g.iter_rows(min_row=1, max_row=1, values_only=True))
-                kp['meta_total']       = row1[16]  # Q1
-                kp['registrado_total'] = row1[19]  # T1
-                kp['avance']           = row1[22]  # W1
+                def _v1(key):
+                    i = c.get(key)
+                    return row1[i] if (i is not None and i < len(row1)) else None
+                meta_total = _v1('objetivo')
+                registrado_total = _v1('registradas')
+                kp['meta_total']       = meta_total
+                kp['registrado_total'] = registrado_total
+                kp['avance'] = (registrado_total / meta_total) if meta_total else None
             if 'R_Cumplimiento' in wb.sheetnames:
                 rc = wb['R_Cumplimiento']
                 # E9 = fila 9 col 5
