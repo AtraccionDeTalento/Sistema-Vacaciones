@@ -14215,11 +14215,19 @@ def _bg_col_map(header_row):
     }
 
 
+# Corte de la campana Q2: dias de vacaciones con fecha posterior a esto NO cuentan
+# todavia hacia el avance (aunque ya esten registrados/agendados en Adryan).
+_CORTE_REGISTRO_VAC = datetime(2026, 7, 31, 23, 59, 59)
+
+
 def _meta_vac_data():
     """Lee BASE GENERAL del archivo vivo y arma conteos de colaboradores + filas por
     segmento (mismo origen que el avance, para que TODO sea consistente). Cache por mtime.
 
-    Las columnas se resuelven por encabezado (ver _bg_col_map), no por posicion fija."""
+    Las columnas se resuelven por encabezado (ver _bg_col_map), no por posicion fija.
+    Los dias 'Registradas' se recalculan desde la hoja 'base' respetando _CORTE_REGISTRO_VAC:
+    la columna Registradas de BASE GENERAL suma TODOS los periodos ya agendados, incluidos
+    los de despues del corte, y eso infla el avance antes de tiempo."""
     cur_mt = _vac_mtime()
     with _META_LOCK:
         if _META_CACHE['mtime'] == cur_mt and _META_CACHE['data'] is not None:
@@ -14243,9 +14251,11 @@ def _meta_vac_data():
             wb = openpyxl.load_workbook(tmpp, data_only=True, read_only=True)
             rows = []
             base_vacs = {}
+            reg_hasta_corte = {}  # matricula -> dias sumados SOLO hasta _CORTE_REGISTRO_VAC
             if 'base' in wb.sheetnames:
                 b_sheet = wb['base']
                 idx_mat, idx_dias, idx_nombre = 0, 7, 1
+                idx_inicio, idx_termino = 5, 6
                 for r_idx, r in enumerate(b_sheet.iter_rows(min_row=1, values_only=True)):
                     if r_idx == 0:
                         for i, val in enumerate(r):
@@ -14253,6 +14263,8 @@ def _meta_vac_data():
                             if c_name in ('matrícula', 'matricula'): idx_mat = i
                             elif c_name in ('días', 'dias'): idx_dias = i
                             elif c_name == 'nombre': idx_nombre = i
+                            elif 'término' in c_name or 'termino' in c_name: idx_termino = i
+                            elif 'início' in c_name or 'inicio' in c_name: idx_inicio = i
                         continue
                     if not r: continue
                     mat = r[idx_mat]
@@ -14264,6 +14276,15 @@ def _meta_vac_data():
                     nombre = str(r[idx_nombre]) if r[idx_nombre] else ''
                     if mat_str not in base_vacs: base_vacs[mat_str] = {'dias': 0, 'nombre': nombre}
                     base_vacs[mat_str]['dias'] += dias
+
+                    # Solo cuenta hacia el avance si el periodo ya ocurrio (o ya empezo) antes
+                    # del corte de campana; si no hay fecha valida, se cuenta igual (mejor sumar
+                    # el dato real que perderlo por un formato raro).
+                    fecha_ref = r[idx_termino] if idx_termino < len(r) else None
+                    if not isinstance(fecha_ref, datetime):
+                        fecha_ref = r[idx_inicio] if idx_inicio < len(r) else None
+                    if (not isinstance(fecha_ref, datetime)) or fecha_ref <= _CORTE_REGISTRO_VAC:
+                        reg_hasta_corte[mat_str] = reg_hasta_corte.get(mat_str, 0.0) + dias
 
             bg_mats = set()
             if 'BASE GENERAL' in wb.sheetnames:
@@ -14285,7 +14306,10 @@ def _meta_vac_data():
                     mat_str = str(int(float(mat))) if str(mat).replace('.','').isdigit() else str(mat).strip()
                     bg_mats.add(mat_str)
                     obj = _num(_v(r, 'objetivo'))
-                    reg = _num(_v(r, 'registradas'))
+                    # Preferir el recalculo por fecha (respeta el corte de campana); si esta
+                    # persona no aparece en 'base' (ajuste manual/corporativo sin fila detalle),
+                    # usar la columna cruda de BASE GENERAL como respaldo.
+                    reg = reg_hasta_corte.get(mat_str, _num(_v(r, 'registradas')))
                     if obj <= 0:
                         if reg > 0:
                             rows.append({
@@ -15058,6 +15082,7 @@ def _compute_avance(ruta):
         # --- Detalle de registros reales por matricula (hoja 'base') ---------
         # Cada fila = un periodo de vacaciones efectivamente tomado.
         registros_por_mat = {}
+        reg_hasta_corte = {}  # matricula -> dias sumados SOLO hasta _CORTE_REGISTRO_VAC
         if 'base' in wb.sheetnames:
             b = wb['base']
             for r in b.iter_rows(min_row=2, values_only=True):
@@ -15074,6 +15099,12 @@ def _compute_avance(ruta):
                     'periodo':   str(r[4]).strip() if len(r) > 4 and r[4] is not None else '',
                     'situacion': str(r[11]).strip() if len(r) > 11 and r[11] is not None else '',
                 })
+                if dias > 0:
+                    fecha_ref = r[6] if len(r) > 6 else None
+                    if not isinstance(fecha_ref, datetime):
+                        fecha_ref = r[5] if len(r) > 5 else None
+                    if (not isinstance(fecha_ref, datetime)) or fecha_ref <= _CORTE_REGISTRO_VAC:
+                        reg_hasta_corte[mat] = reg_hasta_corte.get(mat, 0.0) + dias
 
         glob = {}
         # Acumuladores por BP canonico
@@ -15130,7 +15161,9 @@ def _compute_avance(ruta):
                         continue
 
                 meta_p = _num(_v(row, 'objetivo'))
-                reg_p  = _num(_v(row, 'registradas'))
+                # Preferir el recalculo por fecha (respeta el corte de campana, no adelanta
+                # dias de agosto en adelante); si no aparece en 'base', usar la columna cruda.
+                reg_p  = reg_hasta_corte.get(mat, _num(_v(row, 'registradas')))
 
                 if meta_p > 0:
                     glob_meta_con += meta_p

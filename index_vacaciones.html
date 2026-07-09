@@ -68,16 +68,7 @@
     <div class="kcard kcard--avance interactive" id="kpiAlerta" data-filter="avance" title="Avance de la meta de vacaciones — clic para ver por Business Partner">
       <span class="kcard-icon">📈</span>
       <span class="kcard-label" id="lblSinVac">AVANCE DE META</span>
-      <div class="kcard-dual">
-        <span class="kcard-dual-item" title="Avance contando SOLO colaboradores con meta asignada (excluye colegio y ex-empleados). Es el numero limpio.">
-          <b class="kcard-num" id="kAlerta"><span class="spin"></span></b>
-          <span class="kcard-dual-lbl">con meta</span>
-        </span>
-        <span class="kcard-dual-item" title="Avance sobre toda la base, incluyendo colegio (sin meta). Coincide con el total del Excel.">
-          <b class="kcard-num2" id="kAvanceTotal">—</b>
-          <span class="kcard-dual-lbl">total c/ colegio</span>
-        </span>
-      </div>
+      <b class="kcard-num" id="kAlerta" title="Avance contando SOLO colaboradores con meta asignada (excluye colegio y ex-empleados)."><span class="spin"></span></b>
       <div class="kcard-bar"><div class="kcard-bar-fill" id="kAvanceBar"></div><div class="kcard-bar-fill-colegio" id="kAvanceBarColegio"></div></div>
       <span class="kcard-foot" id="kAvanceFoot">en tiempo real</span>
       <div class="kcard-prediction" id="kPredictionWrap">
@@ -487,16 +478,8 @@
 
     <div class="av-global">
       <div class="av-main">
-        <div class="av-main-top">
-          <div class="av-num-group" title="Avance contando SOLO colaboradores con meta (excluye colegio y ex-empleados).">
-            <span class="av-big" id="avTodo">—</span>
-            <span class="av-big-lbl">con meta<br>(limpio)</span>
-          </div>
-          <div class="av-num-group av-num-group--total" title="Avance sobre toda la base incluyendo colegio (sin meta). Coincide con el total del Excel.">
-            <span class="av-big2" id="avTodoTotal">—</span>
-            <span class="av-big-lbl">total c/ colegio<br>(= Excel)</span>
-          </div>
-        </div>
+        <div class="av-main-top"><span class="av-big" id="avTodo">—</span>
+          <span class="av-big-lbl">avance (con meta,<br>sin colegio)</span></div>
         <div class="av-bar av-bar-lg"><div class="av-bar-fill" id="avTodoBar"></div><div class="av-bar-fill-colegio" id="avTodoBarColegio"></div></div>
         <div class="av-foot"><b id="avReg">—</b> de <b id="avMeta">—</b> días registrados (con meta)</div>
       </div>
