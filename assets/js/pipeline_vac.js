@@ -381,7 +381,12 @@
     var metaTotal = tieneDesglose ? G.dias_meta_total : G.meta_total;
     var regTotal  = tieneDesglose ? G.dias_gozados_con_meta : G.registrado_total;
 
+    // Total crudo (toda la base, incluye colegio) = coincide con el total del Excel.
+    var avanceTotal = (G.avance_todo != null) ? G.avance_todo
+      : ((G.meta_total) ? (G.registrado_total / G.meta_total) : null);
+
     $('avTodo').textContent = fpct(avanceLimpio);
+    if ($('avTodoTotal')) $('avTodoTotal').textContent = fpct(avanceTotal);
     $('avReg').textContent = fnum(regTotal);
     $('avMeta').textContent = fnum(metaTotal);
     $('avBP').textContent = fpct(recalcularGlobalBP(por_bp_filtrado));

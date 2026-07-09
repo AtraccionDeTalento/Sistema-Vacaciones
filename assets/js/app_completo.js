@@ -822,6 +822,14 @@ function renderAvanceKpi(kp) {
   const num = $('kAlerta'), bar = $('kAvanceBar'), barColegio = $('kAvanceBarColegio'), foot = $('kAvanceFoot');
   if (num) num.textContent = (av == null) ? '—' : (av * 100).toFixed(1) + '%';
 
+  // Segundo numero: avance TOTAL sobre toda la base (incluye colegio) = el que coincide
+  // con el total crudo del Excel. Sale de kp.avance (registrado_total / meta_total).
+  const avTotal = (kp && kp.avance != null && !isNaN(kp.avance))
+    ? Number(kp.avance)
+    : ((kp && kp.registrado_total && kp.meta_total) ? Number(kp.registrado_total) / Number(kp.meta_total) : null);
+  const numTotal = $('kAvanceTotal');
+  if (numTotal) numTotal.textContent = (avTotal == null) ? '—' : (avTotal * 100).toFixed(1) + '%';
+
   const pctCon = (av == null) ? 0 : Math.max(0, Math.min(100, av * 100));
   // Segmento colegio: días de quienes NO tienen meta pero igual salieron, pegado
   // justo despues del segmento principal (expresado como % del mismo total de meta).
