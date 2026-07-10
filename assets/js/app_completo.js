@@ -1559,14 +1559,18 @@ function renderJefesArbol(arbol) {
     const checked = state.selectedSupervisores.has(normalizeSupervisorName(jefe.nombre)) ? 'checked' : '';
     const gers = ((jefe.gerencias || []).concat(jefe.subgerencias || [])).join('|').toLowerCase();
     const areas = (jefe.areas || []).map(a => a.nombre || a).join('|').toLowerCase();
+    const sinPendientes = !!jefe.sin_pendientes;
+    const contador = sinPendientes
+      ? '<span style="font-size:11px;color:#16a34a;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:99px;padding:1px 8px">✓ sin personas por enviar de vacaciones</span>'
+      : `<span style="font-size:11px;color:#64748b">(${jefe.total_colaboradores} colab.)</span>`;
 
     html += `
-      <div class="jefe-block" data-jefe-name="${jefe.nombre.toLowerCase()}" data-hrbp="${(jefe.hrbp || '').toLowerCase()}" data-gerencias="${gers}" data-areas="${areas}" style="margin-bottom:8px;border-left:3px solid #0f6ea5;padding-left:8px">
+      <div class="jefe-block" data-jefe-name="${jefe.nombre.toLowerCase()}" data-hrbp="${(jefe.hrbp || '').toLowerCase()}" data-gerencias="${gers}" data-areas="${areas}" style="margin-bottom:8px;border-left:3px solid #0f6ea5;padding-left:8px${sinPendientes ? ';opacity:.7' : ''}">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
           <input type="checkbox" id="${jefe_id}_cb" ${checked} data-jefe="${jefe.nombre}" onchange="toggleJefe(this)" />
           <button class="expand-btn" id="${jefe_id}_btn" onclick="toggleJefeDetails('${jefe_id}')" style="background:none;border:none;cursor:pointer;padding:0;color:#0f6ea5;font-weight:bold;font-size:12px">▶</button>
           <span style="font-weight:700;color:#1b2a3d;font-size:14px">${jefe.nombre}</span>
-          <span style="font-size:11px;color:#64748b">(${jefe.total_colaboradores} colab.)</span>
+          ${contador}
         </div>
         <div id="${jefe_id}_details" style="display:none;margin-top:6px;padding-left:12px;border-left:2px solid #e2e8f0">
     `;

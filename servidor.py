@@ -5312,6 +5312,7 @@ def api_get_supervisores_emails():
 
 
 _SUPERVISORES_CACHE = {'key': None, 'data': None}
+_SUPERVISORES_CACHE_TODOS = {'key': None, 'data': None}  # variante solo_pendientes=False (arbol de jefes UI)
 _SUPERVISORES_COMPUTE_LOCK = threading.Lock()  # solo un calculo a la vez
 
 def _supervisores_refresh_bg():
@@ -5349,42 +5350,54 @@ def _supervisores_cache_key():
 
 
 
-def _supervisores_automaticos_desde_maestra(force=False):
+def _supervisores_automaticos_desde_maestra(force=False, solo_pendientes=True):
     """Wrapper con cache stale-while-revalidate + lock para serializar el calculo pesado.
 
     - Si hay cache fresco: lo devuelve al instante.
     - Si hay cache obsoleto: lo devuelve al instante y refresca en fondo.
     - Si no hay cache: calcula bajo lock (max 1 calculo a la vez) para no saturar
       los threads del servidor con multiples lecturas de Excel en paralelo.
-    """
-    if not force and _SUPERVISORES_CACHE.get('data') is not None:
+
+    solo_pendientes distingue dos vistas (con cache independiente, ver
+    _SUPERVISORES_CACHE / _SUPERVISORES_CACHE_TODOS): la de envio de alertas
+    (solo jefes con pendientes) y la del arbol de jefes de la UI (todos)."""
+    cache = _SUPERVISORES_CACHE if solo_pendientes else _SUPERVISORES_CACHE_TODOS
+
+    if not force and cache.get('data') is not None:
         _cache_key_now = _supervisores_cache_key()
-        if _cache_key_now and _cache_key_now == _SUPERVISORES_CACHE.get('key'):
-            return _SUPERVISORES_CACHE['data'], None  # cache fresco
-        # Cache obsoleto: devolver igual y refrescar en fondo
-        threading.Thread(target=_supervisores_refresh_bg, daemon=True).start()
-        return _SUPERVISORES_CACHE['data'], None
+        if _cache_key_now and _cache_key_now == cache.get('key'):
+            return cache['data'], None  # cache fresco
+        # Cache obsoleto: devolver igual y refrescar en fondo (solo la variante "pendientes")
+        if solo_pendientes:
+            threading.Thread(target=_supervisores_refresh_bg, daemon=True).start()
+        return cache['data'], None
 
     # No hay cache (o force): calcular bajo lock para no saturar threads
     acquired = _SUPERVISORES_COMPUTE_LOCK.acquire(timeout=25)
     if not acquired:
         # No conseguimos el lock en 25s: si entretanto otro hilo lleno el cache, usarlo
-        if _SUPERVISORES_CACHE.get('data') is not None:
-            return _SUPERVISORES_CACHE['data'], None
+        if cache.get('data') is not None:
+            return cache['data'], None
         return [], 'Servidor ocupado calculando supervisores, reintenta en unos segundos'
     try:
         # Doble-check: otro hilo pudo completar el calculo mientras esperabamos el lock
-        if not force and _SUPERVISORES_CACHE.get('data') is not None:
+        if not force and cache.get('data') is not None:
             _ck = _supervisores_cache_key()
-            if _ck and _ck == _SUPERVISORES_CACHE.get('key'):
-                return _SUPERVISORES_CACHE['data'], None
-        return _supervisores_compute_impl()
+            if _ck and _ck == cache.get('key'):
+                return cache['data'], None
+        return _supervisores_compute_impl(solo_pendientes=solo_pendientes)
     finally:
         _SUPERVISORES_COMPUTE_LOCK.release()
 
 
-def _supervisores_compute_impl():
-    """Calculo real (pesado): lee Excel de objetivos + maestra y arma el arbol de jefes."""
+def _supervisores_compute_impl(solo_pendientes=True):
+    """Calculo real (pesado): lee Excel de objetivos + maestra y arma el arbol de jefes.
+
+    solo_pendientes=True (default, comportamiento historico): solo incluye jefes que
+    tienen al menos una persona con meta pendiente (usado para el envio de alertas).
+    solo_pendientes=False: incluye a TODOS los jefes con colaboradores activos, aunque
+    ya no les quede nadie pendiente — usado por el arbol de jefes de la UI para que el
+    jefe no "desaparezca" cuando su equipo ya cumplio."""
     df, err = cargar_objetivos()
 
     if err or df is None:
@@ -5397,19 +5410,20 @@ def _supervisores_compute_impl():
 
     c_goz = _col(df, 'Dias Gozado', 'Dias Gozados', 'Días Gozado', 'Días Gozados')
 
-    c_obj = _col(df, 'Objetivo')
-    if c_obj:
-        meta_vals = pd.to_numeric(df[c_obj], errors='coerce').fillna(0)
-        if float(meta_vals.sum()) > 0:
-            if c_goz:
-                goz_vals = pd.to_numeric(df[c_goz], errors='coerce').fillna(0)
-                df = df[(meta_vals - goz_vals) > 0].copy()
-            else:
-                df = df[meta_vals > 0].copy()
+    if solo_pendientes:
+        c_obj = _col(df, 'Objetivo')
+        if c_obj:
+            meta_vals = pd.to_numeric(df[c_obj], errors='coerce').fillna(0)
+            if float(meta_vals.sum()) > 0:
+                if c_goz:
+                    goz_vals = pd.to_numeric(df[c_goz], errors='coerce').fillna(0)
+                    df = df[(meta_vals - goz_vals) > 0].copy()
+                else:
+                    df = df[meta_vals > 0].copy()
 
-    if c_goz:
-        dias_gozados = pd.to_numeric(df[c_goz], errors='coerce').fillna(0)
-        df = df[dias_gozados > 0].copy()
+        if c_goz:
+            dias_gozados = pd.to_numeric(df[c_goz], errors='coerce').fillna(0)
+            df = df[dias_gozados > 0].copy()
 
     if df.empty:
 
@@ -5954,10 +5968,9 @@ def _supervisores_compute_impl():
     # cálculo es la parte lenta; la clave por mtime es instantánea)
     _cache_key = _supervisores_cache_key()
     if _cache_key:
-
-        _SUPERVISORES_CACHE['key']  = _cache_key
-
-        _SUPERVISORES_CACHE['data'] = items
+        cache_dst = _SUPERVISORES_CACHE if solo_pendientes else _SUPERVISORES_CACHE_TODOS
+        cache_dst['key']  = _cache_key
+        cache_dst['data'] = items
 
     return items, None
 
@@ -5991,13 +6004,19 @@ def api_jefes_equipo_arbol():
 
     sin llamar a _armar_contenido_supervisor() por cada jefe (que era O(n*m) lento).
 
+    Incluye a TODOS los jefes con equipo activo, incluso si ya no les queda nadie
+    pendiente de vacaciones — esos se marcan con 'sin_pendientes': true en vez de
+    desaparecer de la lista.
     """
 
-    items, err = _supervisores_automaticos_desde_maestra()
+    items, err = _supervisores_automaticos_desde_maestra(solo_pendientes=False)
 
     if err:
 
         return jsonify({'ok': False, 'error': err, 'arbol': []}), 400
+
+    items_pend, _err_pend = _supervisores_automaticos_desde_maestra()  # solo_pendientes=True (default)
+    pend_por_jefe = {_nombre_cmp_key(it.get('nombre', '')): it for it in (items_pend or [])}
 
 
 
@@ -6009,7 +6028,11 @@ def api_jefes_equipo_arbol():
 
         jefe_email  = jefe_info.get('email', '')
 
-        jefe_total  = jefe_info.get('total_colaboradores', 0)
+        pend_info   = pend_por_jefe.get(_nombre_cmp_key(jefe_nombre))
+
+        jefe_total  = int(pend_info.get('total_colaboradores', 0)) if pend_info else 0
+
+        sin_pendientes = jefe_total <= 0
 
         jefe_hrbp   = jefe_info.get('hrbp', '')
 
@@ -6050,6 +6073,8 @@ def api_jefes_equipo_arbol():
             'es_vista_ejecutiva': bool(jefe_info.get('es_vista_ejecutiva', False)),
 
             'total_colaboradores': jefe_total,
+
+            'sin_pendientes':     sin_pendientes,
 
             'gerencias':          jefe_info.get('gerencias', []),
 
