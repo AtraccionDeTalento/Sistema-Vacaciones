@@ -24,7 +24,6 @@
   <div class="top-right">
     <button class="btn" id="btnActualizarVac" title="Actualizar con el último reporte de Adryan"
             style="background:#1f9d55;color:#fff;border-color:#1f9d55;font-weight:700">🔄 Actualizar vacaciones</button>
-    <button class="btn" id="btnConfigCola">☁️ Cloud Config</button>
   </div>
 </header>
 
@@ -304,31 +303,6 @@
   </div>
 </div>
 
-<!-- Modal Cloud Config -->
-<div id="cfgModal" class="modal-bg hidden">
-  <div class="modal-card" style="width:min(560px,92vw)">
-    <div class="modal-head">
-      <h4>☁️ Configuración de Carpeta Nube</h4>
-      <button class="btn" id="btnCloseCfg">Cerrar</button>
-    </div>
-    <div class="modal-body" style="padding:20px">
-      <p class="muted">Define la ruta local de la carpeta compartida en OneDrive/SharePoint. Esa misma carpeta se usará como cola común y también guardará el histórico de maestra y objetivos por año/trimestre.</p>
-      <label class="cfg-label" for="cfgDir">Ruta absoluta o carpeta compartida</label>
-      <div class="cfg-input-row">
-        <input class="inp-txt cfg-input" id="cfgDir" placeholder="C:\Users\...\OneDrive\alertas_cola" autocomplete="off" spellcheck="false"/>
-        <button class="btn" id="btnPickCfgDir" type="button">Seleccionar carpeta</button>
-      </div>
-      <div class="cfg-current-box">
-        <div class="cfg-current-label">Carpeta actual</div>
-        <div id="cfgCurrentDir" class="cfg-current-path">Cargando...</div>
-        <a id="cfgOpenLink" class="cfg-open-link disabled" href="#" target="_blank" rel="noreferrer">Abrir carpeta actual</a>
-      </div>
-      <div id="cfgStatus" class="cfg-status">Cargando...</div>
-      <button class="btn btn-brand" id="btnSaveCfg" style="width:100%">Guardar Configuración</button>
-    </div>
-  </div>
-</div>
-
 <!-- FABs -->
 <button id="fabSend" class="fab fab-send hidden" title="Enviar ahora">⚡ Enviar ahora</button>
 <button id="fabCancel" class="fab fab-cancel hidden" title="Cancelar pendiente">✕ Cancelar envío</button>
@@ -478,8 +452,18 @@
 
     <div class="av-global">
       <div class="av-main">
-        <div class="av-main-top"><span class="av-big" id="avTodo">—</span>
-          <span class="av-big-lbl">avance global<br>(toda la base, = Excel)</span></div>
+        <div class="av-main-top">
+          <span class="av-big" id="avTodo">—</span>
+          <span class="av-big-lbl">avance global<br>(toda la base, = Excel)</span>
+          <span class="wkpi-with-info" style="position:relative">
+            <button class="wkpi-info-btn" id="avFormulaBtn" title="¿Cómo se calcula este porcentaje?">ⓘ</button>
+            <div class="wkpi-popover" id="avFormulaPopover" style="left:0;transform:none;width:280px">
+              <div class="wkpi-pop-title">¿Cómo se calcula?</div>
+              <div id="avFormulaTexto" style="font-size:12.5px;color:#34485a;line-height:1.5">—</div>
+              <div class="wkpi-pop-note">Se recalcula solo con cada actualización de la base: la fórmula es siempre la misma, igual que la celda del Excel — solo cambian los números.</div>
+            </div>
+          </span>
+        </div>
         <div class="av-bar av-bar-lg"><div class="av-bar-fill" id="avTodoBar"></div><div class="av-bar-fill-colegio" id="avTodoBarColegio"></div></div>
         <div class="av-foot"><b id="avReg">—</b> de <b id="avMeta">—</b> días registrados</div>
       </div>

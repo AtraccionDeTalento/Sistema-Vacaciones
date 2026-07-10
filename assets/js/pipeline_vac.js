@@ -384,6 +384,13 @@
     $('avMeta').textContent = fnum(metaTotal);
     $('avBP').textContent = fpct(recalcularGlobalBP(por_bp_filtrado));
 
+    var elFormula = $('avFormulaTexto');
+    if (elFormula) {
+      elFormula.innerHTML = '<b>' + fnum(regTotal) + '</b> días registrados ÷ <b>' + fnum(metaTotal) +
+        '</b> días de meta = <b>' + fpct(avanceTotal) + '</b>' +
+        '<br><span style="color:#7a8a99">Mismos totales que la fila 1 de BASE GENERAL del Excel (columnas Objetivo y Registradas), sin excluir colegio ni cesados.</span>';
+    }
+
     var pct = Math.max(0, Math.min(100, (avanceTotal || 0) * 100));
     setTimeout(function () { if ($('avTodoBar')) $('avTodoBar').style.width = pct + '%'; }, 60);
 
@@ -477,6 +484,16 @@
       chk.addEventListener('change', function () {
         setIncluirNuevos(chk.checked);
         renderResumen(); // re-pinta con los datos ya cargados, sin refetch
+      });
+    }
+    var fBtn = $('avFormulaBtn'), fPop = $('avFormulaPopover');
+    if (fBtn && fPop) {
+      fBtn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        fPop.classList.toggle('open');
+      });
+      document.addEventListener('click', function (ev) {
+        if (!fPop.contains(ev.target) && ev.target !== fBtn) fPop.classList.remove('open');
       });
     }
   }
