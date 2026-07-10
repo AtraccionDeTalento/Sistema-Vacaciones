@@ -7683,23 +7683,6 @@ def api_objetivos():
     if c_act:
         df = df[df[c_act].str.upper().str.contains('ACTIVO', na=False)]
 
-    # Excluir cesados: cruzar contra el maestro y eliminar matriculas que ya no existen.
-    # Esto elimina "fantasmas" — personas que estaban en el Excel de objetivos pero
-    # ya fueron retiradas del PersonalMaestroReporte (fin de contrato, cese, etc.)
-    try:
-        dfm_act, _ = _cargar_maestro_universo()
-        if dfm_act is not None and c_mat:
-            c_mat_m = _col(dfm_act, 'Matricula')
-            if c_mat_m:
-                matriculas_activas = set(dfm_act[c_mat_m].dropna().apply(_norm_id))
-                antes = len(df)
-                df = df[df[c_mat].apply(_norm_id).isin(matriculas_activas)]
-                eliminados = antes - len(df)
-                if eliminados > 0:
-                    print(f'[API-OBJ] {eliminados} registros excluidos por no estar en el maestro (cesados/fantasmas)')
-    except Exception as e:
-        print(f'[API-OBJ] Advertencia al cruzar con maestro: {e}')
-
     # Filtros
 
     if f_hrbp and c_hrbp:
@@ -14391,23 +14374,6 @@ def _meta_vac_data():
 
             wb.close()
 
-            # Cruzar con PersonalMaestroReporte para excluir cesados/fantasmas.
-            # Mismo filtro que /api/objetivos para que todos los datos sean consistentes.
-            try:
-                df_mae, _ = _cargar_maestro_universo()
-                if df_mae is not None and not df_mae.empty:
-                    def _cln_mat(x): return str(int(float(x))) if str(x).replace('.','').isdigit() else str(x).strip()
-                    c_mat_m = _col(df_mae, 'Matricula')
-                    if c_mat_m:
-                        mats_activas = set(df_mae[c_mat_m].dropna().apply(_cln_mat))
-                        antes = len(rows)
-                        rows = [r for r in rows if _cln_mat(r.get('matricula', '')) in mats_activas]
-                        excl = antes - len(rows)
-                        if excl > 0:
-                            print(f'[META-VAC] {excl} registros excluidos por no estar en el maestro (cesados/fantasmas)')
-            except Exception as e:
-                print(f'[META-VAC] Advertencia al cruzar con maestro: {e}')
-
             con_meta_rows   = [x for x in rows if not x.get('sin_meta_con_vac')]
             cumplieron_rows = [x for x in rows if x.get('cumplio')]
             sin_ini_rows    = [x for x in rows if x.get('sin_iniciar')]
@@ -15125,18 +15091,6 @@ def _compute_avance(ruta):
         acc = {nombre: {'hrbp': nombre, 'n': 0, 'meta': 0.0, 'registro': 0.0,
                         'personas': []} for _, nombre in _BP_CANON}
 
-        # Pre-cargar maestro para filtrar fantasmas/cesados
-        mats_activas = None
-        try:
-            df_mae, _ = _cargar_maestro_universo()
-            if df_mae is not None and not df_mae.empty:
-                def _cln_mat(x): return str(int(float(x))) if str(x).replace('.','').isdigit() else str(x).strip()
-                c_mat_m = _col(df_mae, 'Matricula')
-                if c_mat_m:
-                    mats_activas = set(df_mae[c_mat_m].dropna().apply(_cln_mat))
-        except Exception as e:
-            print('[COMPUTE-AVANCE] Error cargando maestro:', e)
-
         if 'BASE GENERAL' in wb.sheetnames:
             g = wb['BASE GENERAL']
             # Columnas resueltas por encabezado (fila 2), nunca por posicion fija: la
@@ -15167,12 +15121,6 @@ def _compute_avance(ruta):
             for row in g.iter_rows(min_row=3, values_only=True):
                 mat = str(_v(row, 'matricula') or '').strip()
                 if not mat: continue
-
-                # Excluir si no está en maestro (cesado)
-                if mats_activas is not None:
-                    mat_cln = str(int(float(mat))) if str(mat).replace('.','').isdigit() else mat
-                    if mat_cln not in mats_activas:
-                        continue
 
                 meta_p = _num(_v(row, 'objetivo'))
                 # Preferir el recalculo por fecha (respeta el corte de campana, no adelanta
