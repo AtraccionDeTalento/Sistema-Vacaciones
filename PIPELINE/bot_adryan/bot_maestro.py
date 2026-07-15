@@ -37,11 +37,12 @@ os.makedirs(LOG_DIR, exist_ok=True)
 import guardar_password
 import bot_adryan  # reusa el login robusto (campo oculto duplicado + verificacion + reintentos)
 
-FILAS_DUENOS = 3
-EMAIL_SEGURO = "jlopezp@usil.edu.pe"
-COL_EMAIL = 20  # columna "DIRECCIÓN ELECTRÓNICA" (0-based en la data, fila 11 = headers)
-FILA_HEADER = 11
-FILA_DATA_INICIO = 12
+# Defaults de respaldo si config_bot.json no trae estas claves (compatibilidad
+# hacia atras); el valor real y editable vive en config_bot.json.
+FILAS_DUENOS_DEFAULT = 3
+EMAIL_SEGURO_DEFAULT = "jlopezp@usil.edu.pe"
+FILA_HEADER_DEFAULT = 11
+FILA_DATA_INICIO_DEFAULT = 12
 
 
 def log(msg: str):
@@ -143,9 +144,15 @@ def descargar_maestro(page, cfg) -> str:
     return destino
 
 
-def sanitizar_maestro(ruta_xlsx: str) -> str:
-    """Elimina los 3 primeros registros (dueños) y reemplaza todos los emails."""
+def sanitizar_maestro(ruta_xlsx: str, cfg: dict) -> str:
+    """Elimina los primeros registros (dueños de la corporacion, cantidad
+    configurable via filas_duenos en config_bot.json) y reemplaza todos los emails."""
     import openpyxl
+
+    filas_duenos = int(cfg.get("filas_duenos", FILAS_DUENOS_DEFAULT))
+    email_seguro = cfg.get("email_seguro", EMAIL_SEGURO_DEFAULT)
+    fila_header = int(cfg.get("fila_header_maestro", FILA_HEADER_DEFAULT))
+    fila_data_inicio = int(cfg.get("fila_data_inicio_maestro", FILA_DATA_INICIO_DEFAULT))
 
     log(f"Sanitizando {os.path.basename(ruta_xlsx)}...")
     wb = openpyxl.load_workbook(ruta_xlsx)
@@ -156,14 +163,39 @@ def sanitizar_maestro(ruta_xlsx: str) -> str:
     for row in ws.iter_rows(values_only=True):
         all_rows.append(row)
 
-    # El encabezado está en la fila 11 (índice 10)
-    # Los datos comienzan en la fila 12 (índice 11)
-    metadata_and_header = all_rows[:FILA_HEADER] # 11 filas (0 a 10)
-    data_rows = all_rows[FILA_HEADER:]          # Desde fila 12 (índice 11)
+    # El encabezado está en la fila fila_header (índice fila_header-1)
+    # Los datos comienzan en la fila siguiente
+    metadata_and_header = all_rows[:fila_header]
+    header_row = all_rows[fila_header - 1]
+    data_rows = all_rows[fila_header:]
 
-    # 1) Eliminar los 3 primeros registros de data
-    filtered_data_rows = data_rows[FILAS_DUENOS:]
-    log(f"  Eliminados {FILAS_DUENOS} registros de dueños (en memoria).")
+    # Columnas de email por NOMBRE de cabecera, no por posicion fija: la plantilla
+    # de Adryan ha ganado/movido columnas entre corridas y una posicion fija
+    # (ej. "columna 20") deja de apuntar al email real sin avisar.
+    cols_email = [i for i, h in enumerate(header_row)
+                  if h and 'email' in str(h).strip().lower()]
+    log(f"  Columnas de email detectadas por nombre: {cols_email} "
+        f"({[header_row[i] for i in cols_email]})")
+
+    # Columnas de matricula/nombre por header, solo para el log auditable de abajo
+    idx_mat = next((i for i, h in enumerate(header_row) if h and 'matr' in str(h).strip().lower()), None)
+    idx_ap = next((i for i, h in enumerate(header_row) if h and 'apellido paterno' in str(h).strip().lower()), None)
+    idx_am = next((i for i, h in enumerate(header_row) if h and 'apellido materno' in str(h).strip().lower()), None)
+    idx_no = next((i for i, h in enumerate(header_row) if h and str(h).strip().lower() == 'nombre'), None)
+
+    def _describir(row):
+        mat = row[idx_mat] if idx_mat is not None and idx_mat < len(row) else '?'
+        partes = [row[i] for i in (idx_ap, idx_am, idx_no) if i is not None and i < len(row) and row[i]]
+        return f"{mat} - {' '.join(str(p) for p in partes) or '(sin nombre)'}"
+
+    # 1) Eliminar los primeros N registros de data (asumidos "dueños de la corporacion")
+    descartados = data_rows[:filas_duenos]
+    filtered_data_rows = data_rows[filas_duenos:]
+    log(f"  Descartando {filas_duenos} registro(s) como 'dueños de la corporación' "
+        f"(configurable en config_bot.json -> filas_duenos):")
+    for r in descartados:
+        if r:
+            log(f"    - {_describir(r)}")
 
     # 2) Sustituir todos los emails por el email seguro
     emails_reemplazados = 0
@@ -172,13 +204,14 @@ def sanitizar_maestro(ruta_xlsx: str) -> str:
         if not row:
             continue
         row_list = list(row)
-        if len(row_list) > COL_EMAIL:
-            val = row_list[COL_EMAIL]
-            if val and "@" in str(val):
-                row_list[COL_EMAIL] = EMAIL_SEGURO
-                emails_reemplazados += 1
+        for col in cols_email:
+            if col < len(row_list):
+                val = row_list[col]
+                if val and "@" in str(val):
+                    row_list[col] = email_seguro
+                    emails_reemplazados += 1
         sanitized_data.append(row_list)
-    log(f"  Emails reemplazados: {emails_reemplazados} -> {EMAIL_SEGURO}")
+    log(f"  Emails reemplazados: {emails_reemplazados} -> {email_seguro}")
 
     # Recrear la hoja para evitar la lentitud extrema de delete_rows
     sheet_title = ws.title
@@ -190,7 +223,7 @@ def sanitizar_maestro(ruta_xlsx: str) -> str:
             new_ws.cell(row=r_idx, column=c_idx, value=val)
 
     # Escribir filas de datos sanitizadas
-    for r_idx, row_val in enumerate(sanitized_data, start=FILA_DATA_INICIO):
+    for r_idx, row_val in enumerate(sanitized_data, start=fila_data_inicio):
         for c_idx, val in enumerate(row_val, start=1):
             new_ws.cell(row=r_idx, column=c_idx, value=val)
 
@@ -206,7 +239,7 @@ def sanitizar_maestro(ruta_xlsx: str) -> str:
 
     wb2 = openpyxl.load_workbook(sanitizado, read_only=True, data_only=True)
     ws2 = wb2[wb2.sheetnames[0]]
-    total = sum(1 for row in ws2.iter_rows(min_row=FILA_DATA_INICIO, values_only=True) if row and row[0])
+    total = sum(1 for row in ws2.iter_rows(min_row=fila_data_inicio, values_only=True) if row and row[0])
     wb2.close()
     log(f"  Registros finales: {total}")
 
@@ -226,7 +259,15 @@ def main():
         return 2
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(channel=cfg["canal_navegador"], headless=headless)
+        # Mismos args que bot_adryan.py: si headless=False (necesario para el login,
+        # ver _comentario_headless en config_bot.json), la ventana se abre real pero
+        # posicionada fuera de pantalla para que nadie la toque por accidente mientras
+        # el bot descarga el maestro.
+        browser = pw.chromium.launch(
+            channel=cfg["canal_navegador"],
+            headless=headless,
+            args=["--disable-gpu", "--window-position=-32000,-32000", "--hide-scrollbars"]
+        )
         # Sin storage_state: igual que diagnostico_login.py, siempre login fresco
         # directo a la pagina de login (reusar sesion guardada era lo sospechoso
         # de causar los fallos de login).
@@ -242,7 +283,7 @@ def main():
             destino = descargar_maestro(page, cfg)
             context.storage_state(path=sesion)
 
-            sanitizado = sanitizar_maestro(destino)
+            sanitizado = sanitizar_maestro(destino, cfg)
             log("OK - maestro descargado y sanitizado.")
             print(f"ARCHIVO_MAESTRO={sanitizado}")
             return 0

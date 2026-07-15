@@ -374,10 +374,11 @@
   }
 
   function pintarGlobal(G, por_bp_filtrado) {
-    // Avance = el mismo total crudo que Excel (toda la base, sin excluir colegio/cesados/fecha).
-    var avanceTotal = G.avance_todo;
-    var metaTotal = G.meta_total;
-    var regTotal  = G.registrado_total;
+    // Avance = solo colaboradores con meta asignada (excluye a quienes tomaron
+    // dias sin tener meta, para no inflar el numerador sin aportar al denominador).
+    var avanceTotal = G.avance_con_meta;
+    var metaTotal = G.dias_meta_total;
+    var regTotal  = G.dias_gozados_con_meta;
 
     $('avTodo').textContent = fpct(avanceTotal);
     $('avReg').textContent = fnum(regTotal);
@@ -388,7 +389,9 @@
     if (elFormula) {
       elFormula.innerHTML = '<b>' + fnum(regTotal) + '</b> días registrados ÷ <b>' + fnum(metaTotal) +
         '</b> días de meta = <b>' + fpct(avanceTotal) + '</b>' +
-        '<br><span style="color:#7a8a99">Mismos totales que la fila 1 de BASE GENERAL del Excel (columnas Objetivo y Registradas), sin excluir colegio ni cesados.</span>';
+        '<br><span style="color:#7a8a99">Solo colaboradores con meta asignada. ' +
+        (G.sin_meta_con_vac ? fnum(G.sin_meta_con_vac) + ' persona(s) sin meta registraron ' + fnum(G.dias_gozados_sin_meta) + ' días — no se cuentan aquí, ver lista abajo.' : '') +
+        '</span>';
     }
 
     var pct = Math.max(0, Math.min(100, (avanceTotal || 0) * 100));
@@ -405,11 +408,33 @@
   function open() {
     if ($('detModal')) $('detModal').classList.remove('hidden');
     if ($('avBpList')) $('avBpList').innerHTML = '<div style="padding:14px;color:#888">Cargando…</div>';
-    fetch('/api/vacaciones/avance').then(function (r) { return r.json(); }).then(function (j) {
+    Promise.all([
+      fetch('/api/vacaciones/avance').then(function (r) { return r.json(); }),
+      fetch('/api/vacaciones/sin_meta_detalle').then(function (r) { return r.json(); }).catch(function () { return { ok: false }; })
+    ]).then(function (res) {
+      var j = res[0], s = res[1];
       if (!j.ok) { $('avBpList').innerHTML = '<div style="color:#c0392b;padding:14px">' + esc(j.error || 'Error') + '</div>'; return; }
-      _ultimoPayload = { global: j.global || {}, por_bp: j.por_bp || [] };
+      _ultimoPayload = { global: j.global || {}, por_bp: j.por_bp || [], sinMeta: (s && s.ok) ? (s.personas || []) : [] };
       renderResumen();
     }).catch(function (e) { if ($('avBpList')) $('avBpList').innerHTML = '<div style="color:#c0392b;padding:14px">' + esc('' + e) + '</div>'; });
+  }
+
+  // Sección aparte: personas sin meta asignada que sí registraron días. Nunca
+  // entran al % de avance (ni global ni por BP); se listan resaltadas para
+  // que RRHH las vea sin que distorsionen el cumplimiento.
+  function renderSinMeta(personas) {
+    var tb = $('avSinMetaToolbar'), lst = $('avSinMetaList');
+    if (!tb || !lst) return;
+    if (!personas || !personas.length) { tb.style.display = 'none'; lst.innerHTML = ''; return; }
+    tb.style.display = '';
+    tb.querySelector('.av-bp-title').textContent = '⚠️ Sin meta asignada, pero registraron días (' + personas.length + ')';
+    lst.innerHTML = personas.map(function (p) {
+      return '<div class="av-sinmeta-item">' +
+        '<div><span class="av-sinmeta-name">' + esc(p.nombre) + '</span>' +
+          '<span class="av-sinmeta-sub">' + esc(p.hrbp || 'Sin HRBP') + (p.area ? ' · ' + esc(p.area) : (p.departamento ? ' · ' + esc(p.departamento) : '')) + '</span></div>' +
+        '<div class="av-sinmeta-dias">' + fnum(p.gozado) + ' días</div>' +
+        '</div>';
+    }).join('');
   }
 
   // Vista resumen: una tarjeta por BP, clic para ver el detalle por persona.
@@ -435,21 +460,26 @@
     Array.prototype.forEach.call($('avBpList').querySelectorAll('.av-bp--click'), function (el) {
       el.addEventListener('click', function () { abrirDetalle(el.getAttribute('data-bp')); });
     });
+    renderSinMeta(_ultimoPayload.sinMeta);
   }
 
   // Vista detalle: colaboradores del BP con sus registros reales de vacaciones.
+  // Los que no tienen meta asignada se resaltan aparte (no cuentan en el % del BP).
   function abrirDetalle(bp) {
     var ttl = $('avBpTitle'); if (ttl) ttl.textContent = 'Detalle — ' + bp;
     var tg = $('avToggleNuevos'); if (tg) tg.style.display = 'none';
+    var tbSm = $('avSinMetaToolbar'); if (tbSm) tbSm.style.display = 'none';
+    if ($('avSinMetaList')) $('avSinMetaList').innerHTML = '';
     $('avBpList').innerHTML = '<div style="padding:14px;color:#888">Cargando detalle…</div>';
     fetch('/api/vacaciones/bp_detalle?bp=' + encodeURIComponent(bp)).then(function (r) { return r.json(); }).then(function (j) {
       if (!j.ok) { $('avBpList').innerHTML = barraVolver() + '<div style="color:#c0392b;padding:14px">' + esc(j.error || 'Error') + '</div>'; wireVolver(); return; }
       var d = j.detalle || {}, ppl = d.personas || [];
       var head = '<div class="av-det-sum">' +
-        '<b>' + esc(d.hrbp) + '</b> · ' + fnum(d.n) + ' personas · ' +
+        '<b>' + esc(d.hrbp) + '</b> · ' + fnum(d.n) + ' personas con meta · ' +
         fnum(d.registro) + ' de ' + fnum(d.meta) + ' días (' + fpct(d.avance) + ')</div>';
       var rows = ppl.map(function (p) {
-        var c = color(p.avance), regs = p.registros || [];
+        var sinMeta = !p.meta && Number(p.gozado || 0) > 0;
+        var c = sinMeta ? '#b8860b' : color(p.avance), regs = p.registros || [];
         var det = regs.length
           ? '<table class="av-reg"><thead><tr><th>Inicio</th><th>Término</th><th>Días</th><th>Motivo</th><th>Periodo</th></tr></thead><tbody>' +
             regs.map(function (g) {
@@ -457,12 +487,12 @@
                 fnum(g.dias) + '</td><td>' + esc(g.motivo) + '</td><td>' + esc(g.periodo) + '</td></tr>';
             }).join('') + '</tbody></table>'
           : '<div class="av-reg-none">Sin registros de vacaciones tomadas.</div>';
-        return '<div class="av-pers">' +
+        return '<div class="av-pers' + (sinMeta ? ' av-pers--sinmeta' : '') + '">' +
           '<div class="av-pers-head">' +
             '<div class="av-pers-id"><span class="av-pers-name">' + esc(p.nombre) + '</span>' +
               '<span class="av-pers-sub">' + esc(p.area || p.departamento || '') + (p.puesto ? ' · ' + esc(p.puesto) : '') + '</span></div>' +
-            '<div class="av-pers-num"><span style="color:' + c + ';font-weight:800">' + fpct(p.avance) + '</span>' +
-              '<span class="av-pers-sub">' + fnum(p.gozado) + ' / ' + fnum(p.meta) + ' días</span></div>' +
+            '<div class="av-pers-num"><span style="color:' + c + ';font-weight:800">' + (sinMeta ? 'Sin meta' : fpct(p.avance)) + '</span>' +
+              '<span class="av-pers-sub">' + fnum(p.gozado) + (sinMeta ? ' días tomados' : ' / ' + fnum(p.meta) + ' días') + '</span></div>' +
           '</div>' + det + '</div>';
       }).join('');
       $('avBpList').innerHTML = barraVolver() + head + (rows || '<div style="padding:14px;color:#888">Sin personas.</div>');
@@ -535,15 +565,22 @@
 
       if (!map[udn]) map[udn] = { nombre: udn, meta: 0, gozado: 0, n: 0, avance: 0, gerencias: {} };
       var u = map[udn];
-      u.meta += Number(p.meta || 0); u.gozado += Number(p.gozado || 0); u.n++;
 
       if (!u.gerencias[ger]) u.gerencias[ger] = { nombre: ger, meta: 0, gozado: 0, n: 0, avance: 0, areas: {}, udn: udn };
       var g = u.gerencias[ger];
-      g.meta += Number(p.meta || 0); g.gozado += Number(p.gozado || 0); g.n++;
 
       if (!g.areas[areaKey]) g.areas[areaKey] = { nombre: areaKey, sinArea: !area, meta: 0, gozado: 0, n: 0, avance: 0, personas: [], ger: ger, udn: udn };
       var a = g.areas[areaKey];
-      a.meta += Number(p.meta || 0); a.gozado += Number(p.gozado || 0); a.n++;
+
+      // El % de cumplimiento solo debe contar a quienes tienen meta asignada:
+      // alguien sin meta que registro dias no debe inflar 'gozado' sin aportar
+      // a 'meta' (mismo criterio que el avance por Business Partner).
+      var conMeta = Number(p.meta || 0) > 0;
+      if (conMeta) {
+        u.meta += Number(p.meta || 0); u.gozado += Number(p.gozado || 0); u.n++;
+        g.meta += Number(p.meta || 0); g.gozado += Number(p.gozado || 0); g.n++;
+        a.meta += Number(p.meta || 0); a.gozado += Number(p.gozado || 0); a.n++;
+      }
 
       p._udn = udn; p._ger = ger; p._area = areaKey;
       a.personas.push(p);

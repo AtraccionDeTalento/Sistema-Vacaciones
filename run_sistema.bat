@@ -16,7 +16,33 @@ powershell -NoProfile -Command ^
   "$s.IconLocation='%SystemRoot%\System32\SHELL32.dll,13';" ^
   "$s.Save()" 2>nul
 
-powershell -NoProfile -Command "if ((Test-NetConnection -ComputerName 127.0.0.1 -Port %PORT% -WarningAction SilentlyContinue).TcpTestSucceeded) { Start-Process 'http://127.0.0.1:%PORT%'; exit 0 } else { exit 1 }"
+:: Si el puerto ya responde, verificar que el proceso tenga el servidor.py
+:: actual cargado en memoria (via /api/health). Si el archivo en disco es mas
+:: nuevo que lo que el proceso cargo al arrancar, el codigo esta desactualizado
+:: (Flask/Waitress no recargan solos): se mata el proceso viejo y se sigue
+:: abajo para levantar uno nuevo, en vez de abrir el navegador sobre codigo viejo.
+powershell -NoProfile -Command ^
+  "$ErrorActionPreference='Stop';" ^
+  "$portOk = (Test-NetConnection -ComputerName 127.0.0.1 -Port %PORT% -WarningAction SilentlyContinue).TcpTestSucceeded;" ^
+  "if (-not $portOk) { exit 1 }" ^
+  "$stale = $false;" ^
+  "try {" ^
+  "  $h = Invoke-RestMethod -Uri ('http://127.0.0.1:{0}/api/health' -f %PORT%) -TimeoutSec 3;" ^
+  "  if ($h.codigo_desactualizado) { $stale = $true }" ^
+  "} catch {" ^
+  "  $code = $null;" ^
+  "  try { $code = [int]$_.Exception.Response.StatusCode } catch {}" ^
+  "  if ($code -eq 404) { $stale = $true }" ^
+  "  else { Start-Process ('http://127.0.0.1:{0}' -f %PORT%); exit 0 }" ^
+  "}" ^
+  "if ($stale) {" ^
+  "  Write-Host 'Codigo desactualizado detectado (o /api/health inexistente), reiniciando servidor...';" ^
+  "  Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | ForEach-Object { try { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } catch {} };" ^
+  "  Start-Sleep -Seconds 1;" ^
+  "  exit 1" ^
+  "} else {" ^
+  "  Start-Process ('http://127.0.0.1:{0}' -f %PORT%); exit 0" ^
+  "}"
 if not errorlevel 1 exit /b 0
 
 if not exist "%PYW%" (

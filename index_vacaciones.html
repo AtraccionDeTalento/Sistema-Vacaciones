@@ -66,7 +66,17 @@
     </div>
     <div class="kcard kcard--avance interactive" id="kpiAlerta" data-filter="avance" title="Avance de la meta de vacaciones — clic para ver por Business Partner">
       <span class="kcard-icon">📈</span>
-      <span class="kcard-label" id="lblSinVac">AVANCE DE META</span>
+      <span class="kcard-label wkpi-with-info" id="lblSinVac" style="display:inline-flex;align-items:center;gap:3px">AVANCE DE META
+        <button class="wkpi-info-btn" id="avanceMetaInfoBtn" title="¿Por qué difiere de 'Con meta'?">ⓘ</button>
+        <div class="wkpi-popover" id="avanceMetaPopover" style="width:250px">
+          <div class="wkpi-pop-title">¿Por qué difiere de "Con meta"?</div>
+          <ul class="wkpi-pop-list">
+            <li>📊 Este número es <b>a propósito idéntico al Excel crudo</b>: incluye a TODOS, incluidos cesados y colegio.</li>
+            <li>✅ La tarjeta "Con meta" (y el panel de Business Partners) sí <b>excluye a los cesados</b> — por eso su total de días de meta es menor.</li>
+          </ul>
+          <div class="wkpi-pop-note">Es intencional: sirve para verificar que el sistema calza con la celda del Excel.</div>
+        </div>
+      </span>
       <b class="kcard-num" id="kAlerta" title="Avance sobre toda la base, igual que el total del Excel."><span class="spin"></span></b>
       <div class="kcard-bar"><div class="kcard-bar-fill" id="kAvanceBar"></div><div class="kcard-bar-fill-colegio" id="kAvanceBarColegio"></div></div>
       <span class="kcard-foot" id="kAvanceFoot">en tiempo real</span>
@@ -454,7 +464,7 @@
       <div class="av-main">
         <div class="av-main-top">
           <span class="av-big" id="avTodo">—</span>
-          <span class="av-big-lbl">avance global<br>(toda la base, = Excel)</span>
+          <span class="av-big-lbl">avance global<br>(solo con meta asignada)</span>
           <span class="wkpi-with-info" style="position:relative">
             <button class="wkpi-info-btn" id="avFormulaBtn" title="¿Cómo se calcula este porcentaje?">ⓘ</button>
             <div class="wkpi-popover" id="avFormulaPopover" style="left:0;transform:none;width:280px">
@@ -480,7 +490,14 @@
         <span>Incluir César Reyes y Gabriel Chang</span>
       </label>
     </div>
-    <div id="avBpList" class="av-bp-list"></div>
+    <div class="av-scroll-wrap">
+      <div id="avBpList" class="av-bp-list"></div>
+
+      <div class="av-sinmeta-toolbar" id="avSinMetaToolbar" style="display:none">
+        <div class="av-bp-title">⚠️ Sin meta asignada, pero registraron días</div>
+      </div>
+      <div id="avSinMetaList" class="av-sinmeta-list"></div>
+    </div>
   </div>
 </div>
 
@@ -509,7 +526,8 @@
 .av-bp-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:6px 0 10px;flex-wrap:wrap}
 .av-toggle{display:flex;align-items:center;gap:6px;font-size:11.5px;color:#5a6b7b;font-weight:600;cursor:pointer;user-select:none}
 .av-toggle input{width:15px;height:15px;cursor:pointer;accent-color:#0f6ea5}
-.av-bp-list{overflow:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px}
+.av-scroll-wrap{flex:1 1 auto;min-height:0;overflow:auto;padding-right:4px}
+.av-bp-list{display:flex;flex-direction:column;gap:12px}
 .av-bp{border:1px solid #eef3f7;border-radius:10px;padding:10px 12px}
 .av-bp-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
 .av-bp-name{font-weight:700;color:#143b5e;font-size:13.5px}
@@ -535,6 +553,15 @@
 .av-reg th{text-align:left;color:#5a6b7b;font-weight:600;border-bottom:1px solid #eef3f7;padding:3px 6px}
 .av-reg td{padding:3px 6px;border-bottom:1px solid #f4f7fa;color:#34485a}
 .av-reg-none{font-size:11.5px;color:#9aa7b2;margin-top:6px;font-style:italic}
+.av-sinmeta-toolbar{margin:14px 0 8px}
+.av-sinmeta-list{display:flex;flex-direction:column;gap:8px}
+.av-sinmeta-item{border:1px solid #f0dfae;background:#fdf6e3;border-radius:10px;padding:8px 12px;
+  display:flex;justify-content:space-between;align-items:center;gap:10px}
+.av-sinmeta-name{font-weight:700;color:#8a6416;font-size:12.5px}
+.av-sinmeta-sub{display:block;font-size:11px;color:#9c7a2e;margin-top:2px}
+.av-sinmeta-dias{font-weight:800;color:#b8860b;font-size:14px;white-space:nowrap}
+.av-pers--sinmeta{border-color:#f0dfae;background:#fdf6e3}
+.av-pers--sinmeta .av-pers-name::after{content:" (sin meta)";font-weight:600;color:#b8860b;font-size:11px}
 /* Rango de predicción (conservador – optimista) */
 .kcard-pred-range{display:flex;align-items:center;gap:4px;font-size:11px;justify-content:center;margin-top:2px;flex-wrap:wrap}
 .pred-range-sep{color:#9aa7b2;font-weight:700}
@@ -690,14 +717,27 @@
   function initInfoBtn() {
     var btn = document.getElementById('sumLeadersInfoBtn');
     var pop = document.getElementById('sumLeadersPopover');
-    if (!btn || !pop) return;
-    btn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      pop.classList.toggle('open');
-    });
-    document.addEventListener('click', function (e) {
-      if (!pop.contains(e.target) && e.target !== btn) pop.classList.remove('open');
-    });
+    if (btn && pop) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        pop.classList.toggle('open');
+      });
+      document.addEventListener('click', function (e) {
+        if (!pop.contains(e.target) && e.target !== btn) pop.classList.remove('open');
+      });
+    }
+
+    var btn2 = document.getElementById('avanceMetaInfoBtn');
+    var pop2 = document.getElementById('avanceMetaPopover');
+    if (btn2 && pop2) {
+      btn2.addEventListener('click', function (e) {
+        e.stopPropagation();
+        pop2.classList.toggle('open');
+      });
+      document.addEventListener('click', function (e) {
+        if (!pop2.contains(e.target) && e.target !== btn2) pop2.classList.remove('open');
+      });
+    }
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initInfoBtn);

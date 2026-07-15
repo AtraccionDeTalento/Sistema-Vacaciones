@@ -73,6 +73,14 @@ def medir_tiempo(func):
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
+# mtime de este archivo en el momento en que el proceso lo cargo. run_sistema.bat
+# lo compara contra el mtime real en disco (via /api/health) para detectar si el
+# servidor corriendo quedo con codigo viejo en memoria (Waitress/Flask no recargan
+# solos) y forzar un reinicio automatico en vez de abrir el navegador sobre un
+# proceso desactualizado.
+_SERVIDOR_MTIME_CARGADO = os.path.getmtime(os.path.abspath(__file__))
+_SERVIDOR_BOOT_ISO = datetime.now().isoformat()
+
 
 
 SCRIPT_DIR      = os.path.dirname(os.path.abspath(__file__))
@@ -1187,7 +1195,7 @@ _cache_lock = threading.Lock()
 
 _obj_cache = {'df': None, 'mtime': None, 'ruta': None}
 
-_OBJ_CACHE_VERSION = 'obj_hrbp_v3'
+_OBJ_CACHE_VERSION = 'obj_hrbp_v5_maestro_sin_slice'
 
 _filtros_cache = {'key': None, 'data': None}
 
@@ -2742,10 +2750,12 @@ def _cargar_maestro_universo():
 
         df.columns = [_norm(c) for c in df.columns]
 
-        # Eliminar los primeros 3 registros del reporte SAP (filas fantasma/de sistema)
-        if len(df) > 3:
-            df = df.iloc[3:].reset_index(drop=True)
-            print(f'[MAESTRO-UNIVERSO] Primeros 3 registros eliminados (filas fantasma SAP)')
+        # NOTA: antes se descartaban ciegamente las primeras 3 filas asumiendo que
+        # eran "filas fantasma" de SAP. Verificado que NO es asi: en varios exports
+        # (incluido uno de mayo 2026) esas filas son colaboradores ACTIVOS reales
+        # (las matriculas mas bajas, por venir ordenado ascendente). Ese slice
+        # ciego eliminaba 3 personas reales del universo en cada carga. El filtro
+        # de matricula vacia/nula de abajo ya limpia filas de sistema genuinas.
 
         # IMPORTANTE: NO filtrar por TyC — la tabla maestra es el universo completo
         # necesitamos poder encontrar jefes de cualquier departamento.
@@ -4462,6 +4472,29 @@ def cargar_objetivos():
         import traceback
         traceback.print_exc()
         print(f"[JOIN-ERR] Error al cruzar con Maestro: {e}")
+
+    # Anti-fantasmas: el Excel de objetivos puede arrastrar gente que ya no está
+    # en la compañía (su columna Activo/Cesado interna queda desactualizada).
+    # El maestro (_cargar_maestro_universo) es la fuente autoritativa de quién
+    # sigue vigente: si la matrícula ya no aparece ahí, se excluye del universo
+    # de objetivos aquí mismo, para que TODOS los endpoints que consumen
+    # cargar_objetivos() (KPIs, avance de meta, BP, envío masivo, etc.) queden
+    # protegidos sin tener que repetir el filtro en cada uno.
+    try:
+        if mat_col:
+            df_maestro_gh, err_gh = _cargar_maestro_universo()
+            if df_maestro_gh is not None and not err_gh:
+                c_mat_gh = _col(df_maestro_gh, 'Matricula')
+                if c_mat_gh:
+                    mats_vigentes = set(df_maestro_gh[c_mat_gh].dropna().apply(_norm_id))
+                    mats_vigentes.discard('')
+                    antes = len(df)
+                    df = df[df[mat_col].apply(_norm_id).isin(mats_vigentes)].reset_index(drop=True)
+                    descartados = antes - len(df)
+                    if descartados:
+                        print(f"[ANTI-FANTASMA] {descartados} registro(s) excluidos: matrícula ya no existe en el maestro de personal vigente")
+    except Exception as e:
+        print(f"[ANTI-FANTASMA] Error al filtrar fantasmas: {e}")
 
     _obj_cache.update({'df': df, 'mtime': _mt, 'ruta': ruta, 'version': _OBJ_CACHE_VERSION})
     # Guardar pickle cache de objetivos
@@ -7062,7 +7095,8 @@ def api_cola_enviar_outlook_ahora():
     try:
         result = subprocess.run(
             [sys.executable, script],
-            capture_output=True, text=True, timeout=120, encoding='utf-8', errors='replace'
+            capture_output=True, text=True, timeout=120, encoding='utf-8', errors='replace',
+            creationflags=_POPEN_FLAGS,
         )
         stdout = result.stdout or ''
         stderr = result.stderr or ''
@@ -7084,6 +7118,26 @@ def api_cola_enviar_outlook_ahora():
         return jsonify({'ok': False, 'error': 'Timeout: Outlook tardó más de 2 minutos. ¿Está Outlook abierto?'})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/api/health')
+def api_health():
+    """Permite a run_sistema.bat verificar si el proceso corriendo tiene el
+    servidor.py mas reciente cargado en memoria, o si quedo con codigo viejo
+    de una sesion anterior (Flask/Waitress no recargan solos al editar el
+    archivo). Si servidor_mtime_cargado < mtime actual en disco, hay que
+    reiniciar el proceso."""
+    try:
+        mtime_actual = os.path.getmtime(os.path.abspath(__file__))
+    except OSError:
+        mtime_actual = None
+    return jsonify({
+        'ok': True,
+        'servidor_mtime_cargado': _SERVIDOR_MTIME_CARGADO,
+        'servidor_mtime_disco': mtime_actual,
+        'boot_time': _SERVIDOR_BOOT_ISO,
+        'codigo_desactualizado': bool(mtime_actual and mtime_actual > _SERVIDOR_MTIME_CARGADO + 1),
+    })
 
 
 @app.route('/api/init')
@@ -14073,6 +14127,13 @@ def _pre_cargar_todo_sincrono():
 # ═══════════════════════════════════════════════════════════════════════════════
 import subprocess as _subprocess
 
+# Evita que aparezca una consola cmd negra cada vez que se lanza un bot/pipeline
+# hijo (bot_adryan.py, bot_maestro.py, pipeline.py): python.exe (a diferencia de
+# pythonw.exe) es una app de consola, y sin CREATE_NO_WINDOW Windows le abre una
+# ventana visible aunque el padre (servidor.py, corriendo con pythonw/waitress)
+# no tenga ninguna.
+_POPEN_FLAGS = _subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+
 _PIPELINE_MOTOR   = os.path.join(SCRIPT_DIR, 'PIPELINE', 'motor')
 _PIPELINE_SCRIPT  = os.path.join(_PIPELINE_MOTOR, 'pipeline.py')
 _PIPELINE_CONFIG  = os.path.join(_PIPELINE_MOTOR, 'config.json')
@@ -14121,7 +14182,7 @@ def _python_tiene_modulos(py_exe, modulos):
     try:
         chk = _subprocess.run(
             [py_exe, '-c', 'import ' + ', '.join(modulos)],
-            capture_output=True, timeout=15,
+            capture_output=True, timeout=15, creationflags=_POPEN_FLAGS,
         )
         return chk.returncode == 0
     except Exception:
@@ -14220,7 +14281,52 @@ def _bg_col_map(header_row):
         'suma_total':   _find('suma de'),
         'objetivo':     _find('objetivo'),
         'registradas':  _find('registrad'),
+        'activo':       _find('activo', 'cesado'),
     }
+
+
+def _bg_es_cesado(valor):
+    """La columna 'Activo /Cesado' de BASE GENERAL trae el texto 'Activo' para
+    quien sigue en la empresa, o la FECHA DE CESE (ej. '31/05/2026') para quien
+    ya se fue. Vacio/None no dice nada (muchas filas activas no la llenan) y no
+    debe tratarse como cesado. Cualquier otro valor no vacio = cesado: no debe
+    contarse en meta/avance ni aparecer en listados (fantasma de alguien que ya
+    no trabaja aqui pero seguia con meta asignada del trimestre)."""
+    if valor is None:
+        return False
+    s = str(valor).strip()
+    if not s or s.upper() == 'ACTIVO':
+        return False
+    return True
+
+
+def _maestro_matriculas_activas():
+    """Matriculas (sin ceros a la izquierda) presentes en el maestro de personal
+    vigente (DATAS/PersonalMaestroReporte..., ver _cargar_maestro_universo), que
+    solo trae gente ACTUALMENTE activa. La plantilla de BASE GENERAL en produccion
+    no siempre trae una columna Activo/Cesado utilizable (ver _bg_es_cesado), asi
+    que esta es la señal mas confiable: si una matricula de BASE GENERAL no
+    aparece aqui, esa persona ya no trabaja en la empresa (fantasma con meta
+    asignada de un trimestre en el que si trabajaba). None = no se pudo cargar
+    el maestro; en ese caso no se filtra por este criterio (fail-open)."""
+    try:
+        df_m, err = _cargar_maestro_universo()
+    except Exception:
+        return None
+    if df_m is None or df_m.empty:
+        return None
+    c_mat = _col(df_m, 'Matricula')
+    if not c_mat:
+        return None
+    out = set()
+    for v in df_m[c_mat]:
+        s = str(v).strip()
+        if not s or s.lower() == 'nan':
+            continue
+        if s.isdigit():
+            s = str(int(s))
+        out.add(s)
+    return out or None
 
 
 # Corte de la campana Q2: dias de vacaciones con fecha posterior a esto NO cuentan
@@ -14295,6 +14401,8 @@ def _meta_vac_data():
                         reg_hasta_corte[mat_str] = reg_hasta_corte.get(mat_str, 0.0) + dias
 
             bg_mats = set()
+            bg_mats_cesados = set()
+            mats_activas = _maestro_matriculas_activas()
             if 'BASE GENERAL' in wb.sheetnames:
                 g = wb['BASE GENERAL']
                 def _num(v):
@@ -14312,6 +14420,18 @@ def _meta_vac_data():
                     if mat is None or str(mat).strip() == '':
                         continue
                     mat_str = str(int(float(mat))) if str(mat).replace('.','').isdigit() else str(mat).strip()
+                    # Cesado si: (a) la columna Activo/Cesado trae fecha de cese, o
+                    # (b) ya no aparece en el maestro de personal vigente (que solo
+                    # trae gente activa). (b) es la señal confiable hoy: la plantilla
+                    # de BASE GENERAL en produccion no siempre trae (a).
+                    es_cesado = _bg_es_cesado(_v(r, 'activo')) or (
+                        mats_activas is not None and mat_str not in mats_activas)
+                    if es_cesado:
+                        # Ya ceso: no cuenta aunque tenga meta asignada. Se marca aparte
+                        # (no en bg_mats) para que el bloque de 'fantasmas' de abajo no lo
+                        # vuelva a agregar como "sin meta" solo por no estar en bg_mats.
+                        bg_mats_cesados.add(mat_str)
+                        continue
                     bg_mats.add(mat_str)
                     obj = _num(_v(r, 'objetivo'))
                     # Preferir el recalculo por fecha (respeta el corte de campana); si esta
@@ -14330,6 +14450,7 @@ def _meta_vac_data():
                                 'departamento': _v(r, 'departamento') or '',
                                 'area': _v(r, 'area') or '',
                                 'objetivo': 0.0, 'dias_gozados': reg,
+                                'dias_excedidos': 0.0,
                                 'total_dias': _num(_v(r, 'suma_total')),
                                 'vencidas': _num(_v(r, 'vencidas')),
                                 'pendientes': _num(_v(r, 'pendiente')),
@@ -14341,10 +14462,16 @@ def _meta_vac_data():
                         continue
                     venc = _num(_v(r, 'vencidas'))
                     pend = _num(_v(r, 'pendiente'))
-                    cumplio = reg >= obj
+                    reg_real = reg
+                    cumplio = reg_real >= obj
                     oblig_pend = (not cumplio) and (venc > 0 or pend > 0)
+                    # Días tomados por encima de la meta: no se muestran en la app
+                    # (el avance no debe superar 100%), pero se contabilizan aparte
+                    # para el reporte Excel.
+                    dias_excedidos = max(reg_real - obj, 0.0) if obj > 0 else 0.0
+                    reg = min(reg_real, obj) if obj > 0 else reg_real
                     meta_pct = (reg / obj) if obj > 0 else 0.0
-                    sin_iniciar = (not cumplio) and reg == 0
+                    sin_iniciar = (not cumplio) and reg_real == 0
                     casi_listo = (not cumplio) and 0.75 <= meta_pct < 1.0
                     rows.append({
                         'matricula': str(mat).strip(),
@@ -14356,6 +14483,7 @@ def _meta_vac_data():
                         'departamento': _v(r, 'departamento') or '',
                         'area': _v(r, 'area') or '',
                         'objetivo': obj, 'dias_gozados': reg,
+                        'dias_excedidos': dias_excedidos,
                         'total_dias': _num(_v(r, 'suma_total')),
                         'vencidas': venc, 'pendientes': pend,
                         'meta_pct': meta_pct,
@@ -14364,7 +14492,7 @@ def _meta_vac_data():
                         'sin_meta_con_vac': False,
                     })
 
-            fantasmas = [m for m in base_vacs if m not in bg_mats]
+            fantasmas = [m for m in base_vacs if m not in bg_mats and m not in bg_mats_cesados]
             if fantasmas:
                 try:
                     df_mae, _ = _cargar_maestro_universo()
@@ -14442,21 +14570,41 @@ def _vac_mtime():
 
 def _kpis_vacaciones():
     """KPIs de avance de meta. Prefiere el JSON local del pipeline (rapido, sin lock de
-    OneDrive) SOLO si no esta desactualizado respecto al Excel vivo (compara mtimes);
-    si el Excel cambio despues de que se genero ese JSON, se ignora y se lee el Excel
-    directamente. Sin este chequeo, reemplazar el archivo de datos no tenia ningun
-    efecto porque este JSON viejo seguia ganando siempre."""
+    OneDrive) SOLO si no esta desactualizado respecto al Excel vivo.
+
+    IMPORTANTE: la frescura NO se decide comparando mtimes de archivo (os.path.getmtime).
+    Se demostro que eso es poco confiable: un checkout/restauracion de repo (git, OneDrive,
+    zip) puede tocar TODOS los archivos con la misma fecha, haciendo que un JSON de hace
+    dias parezca "mas nuevo" que el Excel y gane silenciosamente por semanas (paso con un
+    estado_pipeline.json del 6 de julio que siguio sirviendose el 15 de julio). En vez de
+    eso, se usa el campo 'timestamp' que el propio pipeline escribe DENTRO del JSON al
+    generarlo, y ademas se descarta si tiene mas de 1 dia de antiguedad respecto al
+    momento actual, sin importar que diga el Excel."""
     jpath = os.path.join(SCRIPT_DIR, 'PIPELINE', 'estado_pipeline.json')
     try:
         if os.path.isfile(jpath):
+            with open(jpath, 'r', encoding='utf-8') as f:
+                kp = json.load(f)
+            json_ts_raw = kp.get('timestamp')
+            json_ts = None
+            if json_ts_raw:
+                try:
+                    json_ts = datetime.fromisoformat(str(json_ts_raw))
+                except ValueError:
+                    json_ts = None
             vac_mt = _vac_mtime()
-            json_mt = os.path.getmtime(jpath)
-            if vac_mt is None or json_mt >= vac_mt:
-                with open(jpath, 'r', encoding='utf-8') as f:
-                    kp = json.load(f)
+            vac_dt = datetime.fromtimestamp(vac_mt) if vac_mt else None
+            fresco = (
+                json_ts is not None
+                and (vac_dt is None or json_ts >= vac_dt)
+                and (datetime.now() - json_ts) <= timedelta(days=1)
+            )
+            if fresco:
                 out = {k: kp.get(k) for k in ('meta_total', 'registrado_total', 'avance', 'avance_cumplimiento')}
                 if out.get('avance') is not None or out.get('registrado_total') is not None:
                     return out
+            else:
+                print(f"[PIPE-KPI] estado_pipeline.json descartado por desactualizado (timestamp={json_ts_raw}); leyendo Excel vivo")
     except Exception as e:
         print('[PIPE-KPI] json err:', e)
     # Fallback: Excel vivo. Aqui cae el costo de ~10-25s la PRIMERA vez por mtime.
@@ -14534,6 +14682,7 @@ def _bot_adryan_descargar(job):
             cwd=os.path.dirname(_BOT_ADRYAN),
             stdout=_subprocess.PIPE, stderr=_subprocess.STDOUT,
             text=True, encoding='utf-8', errors='replace', bufsize=1,
+            creationflags=_POPEN_FLAGS,
         )
         for line in proc.stdout:
             line = (line or '').rstrip('\n')
@@ -14583,6 +14732,7 @@ def _pipeline_worker(job_id):
             cmd, cwd=_PIPELINE_MOTOR,
             stdout=_subprocess.PIPE, stderr=_subprocess.STDOUT,
             text=True, encoding='utf-8', errors='replace', bufsize=1,
+            creationflags=_POPEN_FLAGS,
         )
         for line in proc.stdout:
             line = (line or '').rstrip('\n')
@@ -14681,6 +14831,7 @@ def _pipeline_maestro_worker(job_id):
             cmd, cwd=os.path.dirname(_BOT_MAESTRO),
             stdout=_subprocess.PIPE, stderr=_subprocess.STDOUT,
             text=True, encoding='utf-8', errors='replace', bufsize=1,
+            creationflags=_POPEN_FLAGS,
         )
         for line in proc.stdout:
             line = (line or '').rstrip('\n')
@@ -14905,8 +15056,8 @@ def api_exportar_areas():
     thin_bdr   = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
     headers = ['Matrícula','Nombre','Unidad de Negocio','Gerencia / Depto.','Área','Puesto','HRBP',
-               'Meta (días)','Gozados','Saldo','% Avance','Estado']
-    col_w   = [12, 32, 28, 28, 26, 28, 18, 11, 10, 10, 10, 14]
+               'Meta (días)','Gozados','Saldo','Días Excedidos','% Avance','Estado']
+    col_w   = [12, 32, 28, 28, 26, 28, 18, 11, 10, 10, 13, 10, 14]
 
     for ci, (h, w) in enumerate(zip(headers, col_w), 1):
         cell = ws.cell(row=1, column=ci, value=h)
@@ -14921,6 +15072,7 @@ def api_exportar_areas():
         obj  = round(r.get('objetivo', 0) or 0, 1)
         goz  = round(r.get('dias_gozados', 0) or 0, 1)
         saldo= round(max(obj - goz, 0), 1)
+        exced= round(r.get('dias_excedidos', 0) or 0, 1)
         pct  = round((r.get('meta_pct', 0) or 0) * 100, 1)
         if r.get('cumplio'):      estado = 'Cumplió'
         elif r.get('sin_iniciar'): estado = 'Sin iniciar'
@@ -14929,14 +15081,14 @@ def api_exportar_areas():
 
         vals = [r.get('matricula',''), r.get('nombre',''), r.get('unidad_negocio', ''), r.get('departamento',''),
                 r.get('area','') or 'Sin área', r.get('puesto',''), r.get('hrbp',''),
-                obj, goz, saldo, pct, estado]
+                obj, goz, saldo, exced, pct, estado]
         fill = ok_fill if r.get('cumplio') else (err_fill if r.get('sin_iniciar') else warn_fill)
 
         for ci, v in enumerate(vals, 1):
             cell = ws.cell(row=ri, column=ci, value=v)
             cell.border = thin_bdr; cell.font = normal_font
-            cell.alignment = center_al if ci in (1,8,9,10,11) else left_al
-            if ci == 12: cell.fill = fill
+            cell.alignment = center_al if ci in (1,8,9,10,11,12) else left_al
+            if ci == 13: cell.fill = fill
 
     # Hoja resumen por área
     ws2 = wb.create_sheet('Resumen por Área')
@@ -15143,14 +15295,29 @@ def _compute_avance(ruta):
             glob_reg_con  = 0.0
             glob_reg_sin  = 0.0
             glob_n_sin    = 0
+            sin_meta_personas = []
+            mats_activas = _maestro_matriculas_activas()
             for row in g.iter_rows(min_row=3, values_only=True):
-                mat = str(_v(row, 'matricula') or '').strip()
+                mat_raw = _v(row, 'matricula')
+                mat = str(mat_raw or '').strip()
                 if not mat: continue
+                mat_norm = str(int(float(mat))) if mat.replace('.', '').isdigit() else mat
+                # Cesado si: (a) la columna Activo/Cesado trae fecha de cese, o (b) ya
+                # no aparece en el maestro de personal vigente (solo trae gente activa).
+                if _bg_es_cesado(_v(row, 'activo')) or (mats_activas is not None and mat_norm not in mats_activas):
+                    continue  # ya ceso: no cuenta en meta/avance aunque tenga objetivo asignado
 
                 meta_p = _num(_v(row, 'objetivo'))
                 # Preferir el recalculo por fecha (respeta el corte de campana, no adelanta
                 # dias de agosto en adelante); si no aparece en 'base', usar la columna cruda.
                 reg_p  = reg_hasta_corte.get(mat, _num(_v(row, 'registradas')))
+                # Topar los dias gozados a la meta: quien tomo mas dias de los que le
+                # tocaban no debe hacer que el avance (individual, de BP, o el ranking
+                # por Unidad de Negocio/Gerencia/Area que se arma sumando esto) supere
+                # el 100%. El excedente no se muestra aqui (ver dias_excedidos en el
+                # Excel de _meta_vac_data para ese detalle).
+                if meta_p > 0:
+                    reg_p = min(reg_p, meta_p)
 
                 if meta_p > 0:
                     glob_meta_con += meta_p
@@ -15158,14 +15325,29 @@ def _compute_avance(ruta):
                 elif reg_p > 0:
                     glob_reg_sin += reg_p
                     glob_n_sin   += 1
+                    sin_meta_personas.append({
+                        'matricula':    mat,
+                        'nombre':       str(_v(row, 'nombre') or '').strip(),
+                        'hrbp':         str(_v(row, 'hrbp') or '').strip(),
+                        'puesto':       str(_v(row, 'puesto') or '').strip(),
+                        'unidad_negocio': str(_v(row, 'unidad_negocio') or '').strip(),
+                        'departamento': str(_v(row, 'departamento') or '').strip(),
+                        'area':         str(_v(row, 'area') or '').strip(),
+                        'gozado':       reg_p,
+                        'registros':    registros_por_mat.get(mat, []),
+                    })
 
                 bp = _canon_bp(_v(row, 'hrbp'))
                 if not bp:
                     continue
                 a = acc[bp]
-                a['n'] += 1
-                a['meta'] += meta_p
-                a['registro'] += reg_p
+                # El avance por BP solo debe contar a quienes tienen meta asignada:
+                # alguien sin meta que registro vacaciones no debe inflar 'registro'
+                # sin aportar a 'meta' (igual que el avance global "limpio" arriba).
+                if meta_p > 0:
+                    a['n'] += 1
+                    a['meta'] += meta_p
+                    a['registro'] += reg_p
                 a['personas'].append({
                     'matricula':    mat,
                     'nombre':       str(_v(row, 'nombre') or '').strip(),
@@ -15186,6 +15368,7 @@ def _compute_avance(ruta):
             glob['avance_con_meta']       = (glob_reg_con / glob_meta_con) if glob_meta_con > 0 else 0.0
             glob['dias_gozados_sin_meta'] = glob_reg_sin
             glob['sin_meta_con_vac']      = glob_n_sin
+            sin_meta_personas.sort(key=lambda p: -p['gozado'])
         wb.close()
 
         # Resumen por BP + detalle. Solo BPs con al menos una persona.
@@ -15210,7 +15393,8 @@ def _compute_avance(ruta):
         glob['avance_bp']         = (tot_reg / tot_meta) if tot_meta else None
 
         por_bp.sort(key=lambda x: (x['avance'] if x['avance'] is not None else 9))
-        return {'ok': True, 'global': glob, 'por_bp': por_bp, '_detalle': detalle}, None
+        return {'ok': True, 'global': glob, 'por_bp': por_bp, '_detalle': detalle,
+                '_sin_meta_detalle': sin_meta_personas}, None
     except Exception as e:
         return None, str(e)
     finally:
@@ -15234,7 +15418,7 @@ def api_vacaciones_avance():
     # Cache hit: instantaneo
     with _AVANCE_LOCK:
         if _AVANCE_CACHE['mtime'] == cur_mt and _AVANCE_CACHE['data'] is not None:
-            resp = {k: v for k, v in _AVANCE_CACHE['data'].items() if k != '_detalle'}
+            resp = {k: v for k, v in _AVANCE_CACHE['data'].items() if k not in ('_detalle', '_sin_meta_detalle')}
             resp['_cache'] = 'hit'
             return jsonify(resp)
     # Miss: leer Excel (caro). Tomamos el lock SOLO al final para no serializar lecturas.
@@ -15245,7 +15429,7 @@ def api_vacaciones_avance():
         _AVANCE_CACHE['mtime'] = cur_mt
         _AVANCE_CACHE['data']  = data
     # El detalle por persona (pesado) no viaja en el resumen; se sirve aparte.
-    resp = {k: v for k, v in data.items() if k != '_detalle'}
+    resp = {k: v for k, v in data.items() if k not in ('_detalle', '_sin_meta_detalle')}
     resp['_cache'] = 'miss'
     return jsonify(resp)
 
@@ -15283,6 +15467,31 @@ def api_vacaciones_bp_detalle():
     if item is None:
         return jsonify({'ok': False, 'error': 'BP no encontrado: ' + bp}), 404
     return jsonify({'ok': True, 'detalle': item})
+
+
+@app.route('/api/vacaciones/sin_meta_detalle', methods=['GET'])
+def api_vacaciones_sin_meta_detalle():
+    """Lista de colaboradores SIN meta asignada que sin embargo registraron
+    dias de vacaciones (no cuentan en el avance de meta, ni global ni por BP).
+
+    Reutiliza el mismo cache que /avance (un solo parseo del Excel por mtime)."""
+    ruta = VACACIONES_DATA_FILE
+    if not os.path.isfile(ruta):
+        return jsonify({'ok': False, 'error': 'Archivo de vacaciones no encontrado'}), 404
+    cur_mt = _vac_mtime()
+    data = None
+    with _AVANCE_LOCK:
+        if _AVANCE_CACHE['mtime'] == cur_mt and _AVANCE_CACHE['data'] is not None:
+            data = _AVANCE_CACHE['data']
+    if data is None:
+        data, err = _compute_avance(ruta)
+        if data is None:
+            return jsonify({'ok': False, 'error': err or 'error desconocido'}), 503 if err == 'Archivo bloqueado' else 500
+        with _AVANCE_LOCK:
+            _AVANCE_CACHE['mtime'] = cur_mt
+            _AVANCE_CACHE['data']  = data
+    personas = data.get('_sin_meta_detalle') or []
+    return jsonify({'ok': True, 'n': len(personas), 'personas': personas})
 
 
 def _warmup_avance_cache():

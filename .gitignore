@@ -42,3 +42,9 @@ PIPELINE/estado_pipeline.json
 .claude/
 *.pkl
 .version_commit
+
+# Empaquetados/backups sueltos y espacio de pruebas/exploracion (pueden
+# contener datos reales de colaboradores; no van al repo)
+*.zip
+scratch/
+pruebas/
