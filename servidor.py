@@ -15515,6 +15515,65 @@ def _warmup_avance_cache():
             print(f'[BOOT] avance no precalculado: {err}')
     except Exception as e:
         print('[BOOT] warmup avance err:', e)
+
+
+def _disparar_actualizacion_diaria_si_corresponde():
+    """Actualizacion automatica diaria de vacaciones (Adryan) + Maestro de Personal.
+
+    No depende de una tarea programada de Windows a hora fija (si la PC estaba
+    apagada o sin sesion iniciada a esa hora, nunca hubiera corrido). En cambio,
+    se evalua en cada arranque del servidor: si esta maquina tiene los modulos
+    necesarios (playwright + xlwings, solo la(s) maquina(s) administrativa(s) los
+    tienen) y todavia no se corrio hoy, se dispara en segundo plano sin bloquear
+    el arranque del resto de la app. En cualquier otra maquina que no tenga esos
+    modulos, esta funcion no hace nada (silencioso, no es un error)."""
+    try:
+        restante = _adryan_cooldown_restante()
+        if restante > 0:
+            print(f'[ACT-DIARIA] Adryan en cooldown por {restante}s tras un fallo reciente; se omite por ahora.')
+            return
+
+        py = _pipeline_python()
+        if not py or not _python_tiene_modulos(py, ['playwright', 'xlwings']):
+            print('[ACT-DIARIA] Esta maquina no tiene playwright/xlwings instalados; '
+                  'no es la maquina administrativa, se omite (normal en otros equipos).')
+            return
+
+        try:
+            with open(_BOT_ADRYAN_CFG, 'r', encoding='utf-8') as f:
+                _ = json.load(f)
+        except Exception:
+            print('[ACT-DIARIA] No hay config_bot.json / contrasena de Adryan configurada aqui; se omite.')
+            return
+
+        script = os.path.join(SCRIPT_DIR, 'PIPELINE', 'bot_adryan', 'actualizar_todo.py')
+        if not os.path.isfile(script):
+            return
+
+        with _pipeline_lock:
+            if _pipeline_corriendo['flag']:
+                print('[ACT-DIARIA] Ya hay una actualizacion en curso (manual); se omite el disparo automatico.')
+                return
+            _pipeline_corriendo['flag'] = True
+        try:
+            print('[ACT-DIARIA] Verificando si ya se corrio hoy (vacaciones + maestro)...')
+            proc = _subprocess.run(
+                [py, script, '--solo-si-no-corrio-hoy'],
+                cwd=os.path.dirname(script),
+                capture_output=True, text=True, encoding='utf-8', errors='replace',
+                timeout=15 * 60, creationflags=_POPEN_FLAGS,
+            )
+            for linea in (proc.stdout or '').splitlines():
+                print('[ACT-DIARIA]', linea)
+            if proc.returncode == 0:
+                _invalidate_data_caches()
+                print('[ACT-DIARIA] OK.')
+            else:
+                print(f'[ACT-DIARIA] Termino con codigo {proc.returncode} (revisar PIPELINE/bot_adryan/logs/).')
+        finally:
+            _pipeline_corriendo['flag'] = False
+    except Exception as e:
+        print('[ACT-DIARIA] Error inesperado:', e)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -15549,6 +15608,7 @@ if __name__ == '__main__':
         _recuperar_errores_al_inicio()
         _pre_cargar_todo_sincrono()
         _warmup_avance_cache()
+        _disparar_actualizacion_diaria_si_corresponde()
     threading.Thread(target=_boot_async, daemon=True).start()
     threading.Thread(target=_cola_pa_loop, daemon=True).start()
 
