@@ -206,14 +206,21 @@ async function verificarActualizacion(baseDir) {
     }
   }
 
-  const ok = actualizados >= Math.ceil(ARCHIVOS_ACTUALIZABLES.length / 2);
-  if (ok) {
+  // IMPORTANTE: .version_commit solo se escribe si TODOS los archivos bajaron
+  // bien. Antes se marcaba "al dia" con que mas de la mitad hubiera funcionado
+  // (>= 50%), lo que dejaba PCs con una mezcla de archivos viejos y nuevos
+  // marcada como actualizada — en el siguiente arranque, como el commit local
+  // ya coincidia con el remoto, NUNCA se reintentaban los archivos que habian
+  // fallado. Con 0 errores exigidos, si algo falla se reintenta TODO el set en
+  // el proximo arranque (redescargar los que ya estaban bien no hace dano).
+  if (errores === 0 && actualizados > 0) {
     fs.writeFileSync(versionFile, commitRemoto, 'utf8');
     uLog(baseDir, `✅ Actualización completa: ${actualizados} OK, ${errores} errores.`);
     uScreen('¡Actualización completada!', `${actualizados} archivos actualizados.<br><small style="opacity:.5">Iniciando servidor...</small>`);
     await new Promise(r => setTimeout(r, 1200));
-  } else {
-    uLog(baseDir, `⚠️ Solo ${actualizados}/${ARCHIVOS_ACTUALIZABLES.length} descargados — se reintentará próximo arranque.`);
+  } else if (errores > 0) {
+    uLog(baseDir, `⚠️ ${actualizados}/${ARCHIVOS_ACTUALIZABLES.length} OK, ${errores} con error — ` +
+      `NO se marca como actualizado, se reintentara todo el set en el proximo arranque.`);
   }
 
   return actualizados > 0;

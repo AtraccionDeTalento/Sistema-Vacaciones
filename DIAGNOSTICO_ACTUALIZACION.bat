@@ -34,9 +34,9 @@ Write-Host "============================================================"
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [1/6] Ubicar la instalacion (rutas conocidas, luego preguntar)
+# [1/7] Ubicar la instalacion (rutas conocidas, luego preguntar)
 # ------------------------------------------------------------------
-Write-Host "[1/6] Buscando la instalacion..."
+Write-Host "[1/7] Buscando la instalacion..."
 
 $exeName = 'Sistema Vacaciones USIL.exe'
 $candidatos = @(
@@ -83,9 +83,9 @@ if ($exeDir -match 'OneDrive') {
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [2/6] Version instalada localmente
+# [2/7] Version instalada localmente
 # ------------------------------------------------------------------
-Write-Host "[2/6] Version instalada en esta PC..."
+Write-Host "[2/7] Version instalada en esta PC..."
 $verFile = Join-Path $exeDir '.version_commit'
 $localVer = $null
 if (Test-Path $verFile) {
@@ -97,9 +97,9 @@ if (Test-Path $verFile) {
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [3/6] servidor.py presente (senal de instalacion completa)
+# [3/7] servidor.py presente (senal de instalacion completa)
 # ------------------------------------------------------------------
-Write-Host "[3/6] Archivo servidor.py en esta instalacion..."
+Write-Host "[3/7] Archivo servidor.py en esta instalacion..."
 $srv = Join-Path $exeDir 'servidor.py'
 if (Test-Path $srv) {
     Write-Host "    servidor.py encontrado. Modificado: $((Get-Item $srv).LastWriteTime)"
@@ -109,9 +109,9 @@ if (Test-Path $srv) {
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [4/6] Conectividad a GitHub + deteccion de proxy
+# [4/7] Conectividad a GitHub + deteccion de proxy
 # ------------------------------------------------------------------
-Write-Host "[4/6] Probando conexion a GitHub..."
+Write-Host "[4/7] Probando conexion a GitHub..."
 foreach ($t in 'https://github.com', 'https://api.github.com', 'https://raw.githubusercontent.com') {
     try {
         $r = Invoke-WebRequest -Uri $t -Method Head -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
@@ -137,9 +137,9 @@ Write-Host "           salir a internet, la auto-actualizacion falla aunque el n
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [5/6] Ultimo commit en GitHub y comparacion contra la version local
+# [5/7] Ultimo commit en GitHub y comparacion contra la version local
 # ------------------------------------------------------------------
-Write-Host "[5/6] Consultando ultimo commit en GitHub (rama $Branch)..."
+Write-Host "[5/7] Consultando ultimo commit en GitHub (rama $Branch)..."
 $remoteVer = $null
 try {
     $resp2 = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/commits/$Branch" -Headers @{ 'User-Agent' = 'diag-sistema-vacaciones' } -TimeoutSec 15 -UseBasicParsing -ErrorAction Stop
@@ -163,9 +163,92 @@ if (-not $remoteVer) {
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [6/6] Log propio de la app (update.log) - dice exactamente que paso
+# [6/7] Comparacion ARCHIVO POR ARCHIVO contra GitHub (no solo el resumen
+# global de .version_commit, que puede decir "al dia" aunque algunos archivos
+# individuales hayan fallado al descargarse en una actualizacion parcial).
 # ------------------------------------------------------------------
-Write-Host "[6/6] Ultimas lineas de update.log (registro propio de la app)..."
+Write-Host "[6/7] Comparando cada archivo local contra la version en GitHub..."
+Write-Host "      (esto es lo mas preciso: dice archivo por archivo si esta"
+Write-Host "       al dia, desactualizado, o si falta por completo)"
+Write-Host ""
+
+# Misma lista que ARCHIVOS_ACTUALIZABLES en main.js -- si se agrega un archivo
+# nuevo a esa lista, agregarlo tambien aqui.
+$archivos = @(
+    'servidor.py',
+    'index_vacaciones.html',
+    'enviar_cola_outlook.py',
+    '_bp_map.py',
+    'requirements.txt',
+    'assets/js/app_completo.js',
+    'assets/js/pipeline_vac.js',
+    'assets/css/styles.css',
+    'PIPELINE/motor/pipeline.py',
+    'PIPELINE/motor/vac_lib.py',
+    'PIPELINE/motor/config.json',
+    'PIPELINE/bot_adryan/bot_adryan.py',
+    'PIPELINE/bot_adryan/bot_maestro.py',
+    'PIPELINE/bot_adryan/guardar_password.py'
+)
+
+function Get-Sha256OfBytes($bytes) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) }
+    finally { $sha.Dispose() }
+}
+
+$okCount = 0; $desactCount = 0; $faltaCount = 0; $errCount = 0
+foreach ($rel in $archivos) {
+    $relDisplay = $rel
+    $local = Join-Path $exeDir ($rel -replace '/', '\')
+    if (-not (Test-Path $local)) {
+        Write-Host ("    [FALTA]          {0}" -f $relDisplay)
+        $faltaCount++
+        continue
+    }
+    try {
+        $localBytes = [IO.File]::ReadAllBytes($local)
+        $localHash = Get-Sha256OfBytes $localBytes
+        $url = "https://raw.githubusercontent.com/$Repo/$Branch/$rel"
+        $remoteBytes = $null
+        for ($intento = 1; $intento -le 2; $intento++) {
+            try {
+                $remoteBytes = (Invoke-WebRequest -Uri $url -TimeoutSec 30 -UseBasicParsing -ErrorAction Stop).Content
+                break
+            } catch {
+                if ($intento -eq 2) { throw }
+            }
+        }
+        if ($remoteBytes -is [string]) { $remoteBytes = [Text.Encoding]::UTF8.GetBytes($remoteBytes) }
+        $remoteHash = Get-Sha256OfBytes $remoteBytes
+        if ($localHash -eq $remoteHash) {
+            Write-Host ("    [OK]             {0}" -f $relDisplay)
+            $okCount++
+        } else {
+            $localMod = (Get-Item $local).LastWriteTime
+            Write-Host ("    [DESACTUALIZADO] {0}  (modificado local: {1})" -f $relDisplay, $localMod)
+            $desactCount++
+        }
+    } catch {
+        Write-Host ("    [ERROR AL COMPARAR] {0} -- {1}" -f $relDisplay, $_.Exception.Message)
+        $errCount++
+    }
+}
+Write-Host ""
+Write-Host ("    Resumen: {0} al dia, {1} desactualizados, {2} faltantes, {3} no se pudieron comparar" -f $okCount, $desactCount, $faltaCount, $errCount)
+if ($desactCount -gt 0 -or $faltaCount -gt 0) {
+    Write-Host "    [DIAGNOSTICO] Esta PC tiene una actualizacion INCOMPLETA: unos archivos se"
+    Write-Host "    bajaron y otros no. Suele pasar cuando la conexion se corta a mitad de la"
+    Write-Host "    descarga. Cierra la app por completo (Administrador de tareas si hace falta)"
+    Write-Host "    y abrela de nuevo con buena conexion; el auto-actualizador ahora reintenta"
+    Write-Host "    el set completo si detecta que algo quedo a medias."
+}
+Write-Host ""
+
+# ------------------------------------------------------------------
+# [7/7] Log propio de la app (update.log) - dice exactamente que paso
+# ------------------------------------------------------------------
+Write-Host "[7/7] Ultimas lineas de update.log (registro propio de la app)..."
 $logFile = Join-Path $exeDir 'update.log'
 if (Test-Path $logFile) {
     Get-Content $logFile -Tail 30 | ForEach-Object { Write-Host "    $_" }
