@@ -24,12 +24,45 @@ $ErrorActionPreference = 'SilentlyContinue'
 $Repo   = 'AtraccionDeTalento/Sistema-Vacaciones'
 $Branch = 'main'
 
+# Carpeta donde vive el .bat (no una ruta fija de PC: cada maquina lo puede
+# tener en otro lado). Ahi mismo se guardan los resultados, para que sea facil
+# de encontrar y de reenviar. Dos salidas:
+#  - .txt: transcripcion legible completa (para leer/copiar a mano)
+#  - .json: los mismos datos en formato estructurado, para que se puedan leer
+#    de forma automatica y generar un .bat de arreglo especifico para esta PC
+#    sin tener que adivinar nada a partir de texto libre.
+$carpetaSalida = if ($env:SVU_BAT_DIR) { $env:SVU_BAT_DIR } else { $env:TEMP }
+$txtPath  = Join-Path $carpetaSalida 'DIAGNOSTICO_RESULTADO.txt'
+$jsonPath = Join-Path $carpetaSalida 'DIAGNOSTICO_RESULTADO.json'
+try { Start-Transcript -Path $txtPath -Force | Out-Null } catch {}
+
+$resultado = [ordered]@{
+    timestamp_utc     = (Get-Date).ToUniversalTime().ToString('o')
+    maquina           = $env:COMPUTERNAME
+    usuario           = $env:USERNAME
+    exeDir            = $null
+    dentroDeOneDrive  = $false
+    versionLocal      = $null
+    versionRemota     = $null
+    alDiaPorVersion   = $null
+    servidorPyExiste  = $false
+    servidorPyMod     = $null
+    conectividad      = @{}
+    proxyWinHttp      = $null
+    archivos          = @()
+    resumenArchivos   = @{ ok = 0; desactualizados = 0; faltantes = 0; errores = 0 }
+    updateLogTail     = @()
+    procesosActivos   = @()
+}
+
 Write-Host "============================================================"
 Write-Host "  DIAGNOSTICO DE ACTUALIZACION AUTOMATICA"
 Write-Host "  Sistema de Vacaciones USIL"
 Write-Host "============================================================"
 Write-Host "  Ejecuta este archivo en la PC que NO se esta actualizando."
-Write-Host "  Al final, copia toda esta pantalla y enviala a soporte."
+Write-Host "  Al terminar, envia estos DOS archivos (quedan junto a este .bat):"
+Write-Host "    - DIAGNOSTICO_RESULTADO.txt"
+Write-Host "    - DIAGNOSTICO_RESULTADO.json"
 Write-Host "============================================================"
 Write-Host ""
 
@@ -74,7 +107,9 @@ if (-not $exeDir) {
 }
 
 Write-Host "    Carpeta de instalacion: $exeDir"
+$resultado.exeDir = $exeDir
 if ($exeDir -match 'OneDrive') {
+    $resultado.dentroDeOneDrive = $true
     Write-Host "    [AVISO] Esta instalado dentro de una carpeta OneDrive."
     Write-Host "            Ademas de este diagnostico, revisa el icono de OneDrive en la"
     Write-Host "            barra de tareas de esta PC (que diga 'Al dia', con sesion"
@@ -94,6 +129,7 @@ if (Test-Path $verFile) {
 } else {
     Write-Host "    [AVISO] No existe .version_commit -- esta instalacion nunca completo una actualizacion."
 }
+$resultado.versionLocal = $localVer
 Write-Host ""
 
 # ------------------------------------------------------------------
@@ -102,6 +138,8 @@ Write-Host ""
 Write-Host "[3/7] Archivo servidor.py en esta instalacion..."
 $srv = Join-Path $exeDir 'servidor.py'
 if (Test-Path $srv) {
+    $resultado.servidorPyExiste = $true
+    $resultado.servidorPyMod = (Get-Item $srv).LastWriteTime.ToString('o')
     Write-Host "    servidor.py encontrado. Modificado: $((Get-Item $srv).LastWriteTime)"
 } else {
     Write-Host "    [ERROR] No se encontro servidor.py en $exeDir -- instalacion incompleta o corrupta."
@@ -116,18 +154,23 @@ foreach ($t in 'https://github.com', 'https://api.github.com', 'https://raw.gith
     try {
         $r = Invoke-WebRequest -Uri $t -Method Head -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
         Write-Host ("    {0,-40} HTTP {1}" -f $t, [int]$r.StatusCode)
+        $resultado.conectividad[$t] = [int]$r.StatusCode
     } catch {
         $resp = $_.Exception.Response
         if ($resp) {
             Write-Host ("    {0,-40} HTTP {1}" -f $t, [int]$resp.StatusCode)
+            $resultado.conectividad[$t] = [int]$resp.StatusCode
         } else {
             Write-Host ("    {0,-40} SIN RESPUESTA: {1}" -f $t, $_.Exception.Message)
+            $resultado.conectividad[$t] = "SIN_RESPUESTA: $($_.Exception.Message)"
         }
     }
 }
 Write-Host ""
 Write-Host "    Proxy configurado en Windows (WinHTTP):"
-netsh winhttp show proxy | ForEach-Object { Write-Host "    $_" }
+$proxyTxt = netsh winhttp show proxy
+$proxyTxt | ForEach-Object { Write-Host "    $_" }
+$resultado.proxyWinHttp = ($proxyTxt -join ' | ')
 if ($env:HTTP_PROXY -or $env:HTTPS_PROXY) {
     Write-Host "    Variables de entorno detectadas: HTTP_PROXY=$($env:HTTP_PROXY) HTTPS_PROXY=$($env:HTTPS_PROXY)"
 }
@@ -149,16 +192,21 @@ try {
     Write-Host "    [ERROR] No se pudo consultar GitHub: $($_.Exception.Message)"
 }
 Write-Host ""
+$resultado.versionRemota = $remoteVer
 if (-not $remoteVer) {
     Write-Host "    No se pudo comparar: fallo la conexion a GitHub (ver el paso 4)."
+    $resultado.alDiaPorVersion = $null
 } elseif (-not $localVer) {
     Write-Host "    [AVISO] No se puede comparar porque esta PC nunca completo una actualizacion."
+    $resultado.alDiaPorVersion = $false
 } elseif ($localVer -eq $remoteVer) {
     Write-Host "    [OK] Esta PC esta al dia con GitHub."
+    $resultado.alDiaPorVersion = $true
 } else {
     Write-Host "    [DESACTUALIZADO]"
     Write-Host "    Local:  $localVer"
     Write-Host "    Remoto: $remoteVer"
+    $resultado.alDiaPorVersion = $false
 }
 Write-Host ""
 
@@ -201,9 +249,12 @@ $okCount = 0; $desactCount = 0; $faltaCount = 0; $errCount = 0
 foreach ($rel in $archivos) {
     $relDisplay = $rel
     $local = Join-Path $exeDir ($rel -replace '/', '\')
+    $entrada = [ordered]@{ ruta = $rel; estado = $null; modificadoLocal = $null; detalle = $null }
     if (-not (Test-Path $local)) {
         Write-Host ("    [FALTA]          {0}" -f $relDisplay)
         $faltaCount++
+        $entrada.estado = 'FALTA'
+        $resultado.archivos += $entrada
         continue
     }
     try {
@@ -221,19 +272,25 @@ foreach ($rel in $archivos) {
         }
         if ($remoteBytes -is [string]) { $remoteBytes = [Text.Encoding]::UTF8.GetBytes($remoteBytes) }
         $remoteHash = Get-Sha256OfBytes $remoteBytes
+        $entrada.modificadoLocal = (Get-Item $local).LastWriteTime.ToString('o')
         if ($localHash -eq $remoteHash) {
             Write-Host ("    [OK]             {0}" -f $relDisplay)
             $okCount++
+            $entrada.estado = 'OK'
         } else {
-            $localMod = (Get-Item $local).LastWriteTime
-            Write-Host ("    [DESACTUALIZADO] {0}  (modificado local: {1})" -f $relDisplay, $localMod)
+            Write-Host ("    [DESACTUALIZADO] {0}  (modificado local: {1})" -f $relDisplay, $entrada.modificadoLocal)
             $desactCount++
+            $entrada.estado = 'DESACTUALIZADO'
         }
     } catch {
         Write-Host ("    [ERROR AL COMPARAR] {0} -- {1}" -f $relDisplay, $_.Exception.Message)
         $errCount++
+        $entrada.estado = 'ERROR'
+        $entrada.detalle = $_.Exception.Message
     }
+    $resultado.archivos += $entrada
 }
+$resultado.resumenArchivos = @{ ok = $okCount; desactualizados = $desactCount; faltantes = $faltaCount; errores = $errCount }
 Write-Host ""
 Write-Host ("    Resumen: {0} al dia, {1} desactualizados, {2} faltantes, {3} no se pudieron comparar" -f $okCount, $desactCount, $faltaCount, $errCount)
 if ($desactCount -gt 0 -or $faltaCount -gt 0) {
@@ -251,7 +308,9 @@ Write-Host ""
 Write-Host "[7/7] Ultimas lineas de update.log (registro propio de la app)..."
 $logFile = Join-Path $exeDir 'update.log'
 if (Test-Path $logFile) {
-    Get-Content $logFile -Tail 30 | ForEach-Object { Write-Host "    $_" }
+    $tail = Get-Content $logFile -Tail 30
+    $tail | ForEach-Object { Write-Host "    $_" }
+    $resultado.updateLogTail = @($tail)
 } else {
     Write-Host "    No existe update.log -- la app nunca ejecuto el chequeo de actualizacion en esta carpeta."
     Write-Host "    (verifica que el acceso directo abra este .exe y no una copia vieja en otra ruta)."
@@ -264,7 +323,10 @@ Write-Host ""
 Write-Host "INFO EXTRA: procesos 'Sistema Vacaciones USIL' activos..."
 $procs = Get-Process -Name 'Sistema Vacaciones USIL' -ErrorAction SilentlyContinue
 if ($procs) {
-    $procs | ForEach-Object { Write-Host "    PID $($_.Id) -> $($_.Path)" }
+    $procs | ForEach-Object {
+        Write-Host "    PID $($_.Id) -> $($_.Path)"
+        $resultado.procesosActivos += @{ pid = $_.Id; ruta = "$($_.Path)" }
+    }
     Write-Host "    Si hay una ruta distinta a la de arriba, hay MAS de una instalacion en esta PC."
 } else {
     Write-Host "    No hay ninguna instancia abierta ahora mismo."
@@ -278,6 +340,17 @@ Write-Host "    firewall, antivirus o proxy bloqueando la conexion."
 Write-Host "  - Si el paso 5 dice DESACTUALIZADO, cierra la app por completo"
 Write-Host "    (Administrador de tareas si hace falta) y vuelve a abrirla:"
 Write-Host "    se actualiza sola al iniciar, si hay internet."
-Write-Host "  - Copia toda esta pantalla y enviala a soporte si necesitas ayuda."
+Write-Host "  - Envia los dos archivos generados junto a este .bat:"
+Write-Host "      $txtPath"
+Write-Host "      $jsonPath"
 Write-Host "============================================================"
 Write-Host ""
+
+try {
+    ($resultado | ConvertTo-Json -Depth 6) | Set-Content -Path $jsonPath -Encoding UTF8
+    Write-Host "Resultado estructurado guardado en: $jsonPath"
+} catch {
+    Write-Host "[AVISO] No se pudo guardar el JSON de resultado: $($_.Exception.Message)"
+}
+try { Stop-Transcript | Out-Null } catch {}
+Write-Host "Transcripcion completa guardada en: $txtPath"

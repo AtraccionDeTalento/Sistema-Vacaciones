@@ -48,3 +48,8 @@ PIPELINE/estado_pipeline.json
 *.zip
 scratch/
 pruebas/
+
+# Resultados de DIAGNOSTICO_ACTUALIZACION.bat (info especifica de cada PC:
+# nombre de maquina, usuario, rutas locales; no es igual entre computadoras)
+DIAGNOSTICO_RESULTADO.txt
+DIAGNOSTICO_RESULTADO.json
