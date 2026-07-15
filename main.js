@@ -342,7 +342,24 @@ async function setupAndStartServer() {
   try {
     await verificarActualizacion(baseDir);
   } catch (e) {
+    // No es fatal (la app igual arranca con lo que ya tenga en disco), pero
+    // antes este error quedaba solo en la consola/update.log, invisible para
+    // quien esta usando la PC — asi una falla silenciosa (red, proxy, antivirus
+    // bloqueando la escritura de archivos) podia dejar una maquina desactualizada
+    // por semanas sin que nadie lo notara. Ahora se avisa en pantalla un momento.
     console.log('[UPDATE SCRIPTS] Error no fatal:', e.message);
+    uLog(baseDir, `Error no fatal verificando actualizacion: ${e.message}`);
+    if (mainWindow) {
+      mainWindow.loadURL(loadingPage(
+        'No se pudo verificar la actualización',
+        `El sistema seguirá con la versión que ya tiene instalada.<br>` +
+        `Detalle: ${e.message}<br><br>` +
+        `Si esto se repite varios días seguidos, corre <b>DIAGNOSTICO_ACTUALIZACION.bat</b> ` +
+        `(en la carpeta de la app) para ver la causa exacta.`,
+        true
+      ));
+      await new Promise(r => setTimeout(r, 3500));
+    }
   }
 
   // ── Arrancar Python ───────────────────────────────────────────────────────

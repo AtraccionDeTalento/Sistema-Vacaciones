@@ -1865,8 +1865,20 @@ async function enviarInd(flags) {
   log('Envio individual', data);
 }
 
+function showBootBanner(msg) {
+  const b = $('bootBanner');
+  if (!b) return;
+  if (msg && $('bootBannerTxt')) $('bootBannerTxt').textContent = msg;
+  b.style.display = 'flex';
+}
+function hideBootBanner() {
+  const b = $('bootBanner');
+  if (b) b.style.display = 'none';
+}
+
 async function boot() {
   console.log('[DEBUG] boot() called');
+  showBootBanner('Actualizando datos del sistema, un momento…');
 
   // Disparar KPIs en paralelo con /api/init para que el cache del servidor
   // se caliente y los contadores aparezcan tan pronto como sea posible.
@@ -1949,6 +1961,7 @@ async function boot() {
     setStatus('Sistema listo y conectado a fuentes de datos.');
   }
   log('Front cargado con base Talento y Cultura');
+  hideBootBanner();
 
   // Refresco periódico de KPIs cada 60s para mantener predicción y avance actualizados
   setInterval(() => {
@@ -2161,12 +2174,14 @@ if (document.readyState === 'loading') {
     boot().catch(e => {
       console.error('[BOOT ERROR]', e);
       notify(e.message || 'Error al iniciar el sistema.', 'err');
+      hideBootBanner();
     });
   });
 } else {
   boot().catch(e => {
     console.error('[BOOT ERROR]', e);
     notify(e.message || 'Error al iniciar el sistema.', 'err');
+    hideBootBanner();
   });
 }
 

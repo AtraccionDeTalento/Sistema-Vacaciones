@@ -27,6 +27,14 @@
   </div>
 </header>
 
+<!-- Banner visible mientras el sistema carga/recarga datos, para que no parezca
+     que la pantalla se quedo en blanco (antes solo habia spinners pequenos
+     dentro de cada tarjeta, poco notorios). -->
+<div class="boot-banner" id="bootBanner" style="display:none">
+  <span class="boot-banner-spin"></span>
+  <span id="bootBannerTxt">Actualizando datos del sistema, un momento…</span>
+</div>
+
 <!-- ===== MAIN ===== -->
 <main class="wrap">
 
@@ -709,7 +717,7 @@
 .area-rank-row--area{border-left:3px solid #e08a1e;padding-left:14px}
 </style>
 
-<script src="assets/js/app_completo.js?v=20260626-kpi-dias"></script>
+<script src="assets/js/app_completo.js?v=20260715-boot-banner"></script>
 <script src="assets/js/pipeline_vac.js?v=20260626-embudo-v3"></script>
 <script>
 // Popover interactivo del botón ⓘ en "Personas objetivo"
