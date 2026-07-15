@@ -119,9 +119,13 @@ foreach ($c in $candidatosRaw) {
 
 # Filtrar a candidatos validos: o bien tienen el .exe (instalacion empaquetada)
 # o bien tienen servidor.py + .git (carpeta fuente).
-$instalacionesValidas = $candidatos | Where-Object {
+# @(...) fuerza que el resultado sea SIEMPRE un array: si Where-Object deja un
+# solo elemento, PowerShell lo "desenvuelve" a un objeto suelto sin .Count,
+# lo que rompia el flujo en cualquier PC con exactamente UNA instalacion (el
+# caso mas comun en una maquina de usuario final, sin carpeta fuente).
+$instalacionesValidas = @($candidatos | Where-Object {
     (Test-Path (Join-Path $_.ruta $exeName)) -or (Test-Path (Join-Path $_.ruta '.git'))
-}
+})
 
 if (-not $instalacionesValidas -or $instalacionesValidas.Count -eq 0) {
     Write-Host "    No se encontro ninguna copia en las rutas conocidas."

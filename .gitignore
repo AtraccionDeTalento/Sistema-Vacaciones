@@ -49,7 +49,9 @@ PIPELINE/estado_pipeline.json
 scratch/
 pruebas/
 
-# Resultados de DIAGNOSTICO_ACTUALIZACION.bat (info especifica de cada PC:
-# nombre de maquina, usuario, rutas locales; no es igual entre computadoras)
+# Resultados de DIAGNOSTICO_ACTUALIZACION.bat / FORZAR_ACTUALIZACION.bat
+# (info especifica de cada PC: nombre de maquina, usuario, rutas locales;
+# no es igual entre computadoras)
 DIAGNOSTICO_RESULTADO.txt
 DIAGNOSTICO_RESULTADO.json
+FORZAR_ACTUALIZACION_LOG.txt
