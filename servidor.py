@@ -14286,6 +14286,9 @@ _BOT_ADRYAN_CFG   = os.path.join(SCRIPT_DIR, 'PIPELINE', 'bot_adryan', 'config_b
 _pipeline_jobs       = {}
 _pipeline_lock       = threading.Lock()
 _pipeline_corriendo  = {'flag': False}
+# Fecha (YYYY-MM-DD) de la ultima vez que se forzo un recalculo del pipeline
+# por avance sospechoso -- maximo un intento de auto-reparacion por dia.
+_SOSPECHA_FORZADA    = {'fecha': None}
 
 # Adryan puede limitar/bloquear temporalmente logins automatizados si se
 # reciben muchos intentos seguidos (no es un tema de contrasena). Este freno
@@ -15777,6 +15780,53 @@ def _disparar_actualizacion_diaria_si_corresponde():
                 print(f'[ACT-DIARIA] Termino con codigo {proc.returncode} (revisar PIPELINE/bot_adryan/logs/).')
         finally:
             _pipeline_corriendo['flag'] = False
+
+        # Auto-reparacion: si el avance recien cargado quedo marcado como
+        # sospechoso (celda de BASE GENERAL inconsistente con el resto del
+        # dashboard -- caso real: 90.2% vs 36.5% de "Cumplieron" del mismo
+        # Excel), forzar un recalculo REAL del pipeline. El chequeo normal de
+        # arriba (--solo-si-no-corrio-hoy) se salta el pipeline si el crudo de
+        # Adryan no cambio desde ayer -- pero el dato corrupto esta en la
+        # SALIDA (BASE GENERAL), no en la entrada, asi que ese salto dejaba el
+        # numero malo sin reparar indefinidamente aunque nunca cambiara el
+        # crudo. Se intenta como maximo una vez por dia calendario para no
+        # relanzar Excel por COM (ni loguear en Adryan) en cada arranque si el
+        # forzado no logra arreglarlo.
+        try:
+            hoy = datetime.now().date().isoformat()
+            if _SOSPECHA_FORZADA['fecha'] != hoy:
+                kp_check = _kpis_vacaciones()
+                if kp_check and kp_check.get('sospechoso_inconsistente'):
+                    _SOSPECHA_FORZADA['fecha'] = hoy
+                    print('[ACT-DIARIA] Avance sospechoso detectado (no cuadra con el resto del '
+                          'dashboard) -- forzando un recalculo real del pipeline, aunque el crudo '
+                          'de Adryan no haya cambiado...')
+                    with _pipeline_lock:
+                        if _pipeline_corriendo['flag']:
+                            print('[ACT-DIARIA] Ya hay una actualizacion en curso; se reintentara manana.')
+                        else:
+                            _pipeline_corriendo['flag'] = True
+                            try:
+                                proc2 = _subprocess.run(
+                                    [py, script, '--forzar'],
+                                    cwd=os.path.dirname(script),
+                                    capture_output=True, text=True, encoding='utf-8', errors='replace',
+                                    timeout=15 * 60, creationflags=_POPEN_FLAGS,
+                                )
+                                for linea in (proc2.stdout or '').splitlines():
+                                    print('[ACT-DIARIA-FORZADO]', linea)
+                                _invalidate_data_caches()
+                                kp_after = _kpis_vacaciones()
+                                if kp_after and not kp_after.get('sospechoso_inconsistente'):
+                                    print('[ACT-DIARIA-FORZADO] Reparado: el avance recalculado ya no es sospechoso.')
+                                else:
+                                    print('[ACT-DIARIA-FORZADO] Sigue sospechoso despues de forzar el pipeline -- '
+                                          'requiere revisar el Excel a mano (posible celda/pivot rota de verdad, '
+                                          'no solo un recalculo pendiente).')
+                            finally:
+                                _pipeline_corriendo['flag'] = False
+        except Exception as e:
+            print('[ACT-DIARIA] Error intentando auto-reparar avance sospechoso:', e)
     except Exception as e:
         print('[ACT-DIARIA] Error inesperado:', e)
 # ═══════════════════════════════════════════════════════════════════════════════
