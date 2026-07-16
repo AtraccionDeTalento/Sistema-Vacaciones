@@ -843,6 +843,15 @@ function renderAvanceKpi(kp) {
   } else if (foot) {
     foot.textContent = 'en tiempo real';
   }
+
+  // El backend marca este numero como sospechoso si difiere >20pp del calculo
+  // en vivo por persona (_meta_vac_data) -- señal de una celda de formula
+  // corrupta en BASE GENERAL del Excel (paso en produccion: 90.2% mostrado
+  // mientras "Cumplieron" decia 36.5% del mismo archivo). No se oculta el
+  // numero (el proposito de esta tarjeta es calzar con la celda cruda del
+  // Excel a proposito), pero se avisa para que no se tome con confianza ciega.
+  const avisoEl = $('kAvanceSospechoso');
+  if (avisoEl) avisoEl.style.display = (kp && kp.sospechoso_inconsistente) ? '' : 'none';
 }
 
 async function renderKpiCards(retries = 3, delayMs = 3000) {

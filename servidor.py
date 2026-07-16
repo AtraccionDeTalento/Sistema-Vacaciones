@@ -14775,6 +14775,7 @@ def _kpis_vacaciones():
                         print('[PIPE-KPI] no se pudo validar contra meta_vac_data:', e)
             if fresco:
                 out = {k: kp.get(k) for k in ('meta_total', 'registrado_total', 'avance', 'avance_cumplimiento')}
+                out['sospechoso_inconsistente'] = False  # ya paso la validacion cruzada arriba
                 if out.get('avance') is not None or out.get('registrado_total') is not None:
                     return out
             else:
@@ -14827,6 +14828,36 @@ def _kpis_vacaciones():
                     kp['avance_cumplimiento'] = r[4] if len(r) > 4 else None
                     break
             wb.close()
+
+            # Misma validacion cruzada que para estado_pipeline.json, aplicada aqui
+            # tambien: se demostro con un caso real que la fila 1 de BASE GENERAL
+            # (la celda de formula de la que sale este 'avance') puede quedar
+            # guardada con un valor corrupto (de un pipeline.py que corrio por COM
+            # y no termino de recalcular bien) -- y como esta funcion lee esa celda
+            # tal cual esta en el archivo, un Excel corrupto produce el MISMO numero
+            # malo aunque se lea "en vivo" sin ningun cache de por medio. A
+            # diferencia del JSON, aqui NO se descarta el valor (el proposito de
+            # este KPI es justamente calzar con la celda cruda del Excel, a
+            # proposito incluye cesados/colegio -- ver index_vacaciones.html), pero
+            # se marca como sospechoso para que la UI pueda avisar en vez de mostrar
+            # un numero imposible con total confianza.
+            kp['sospechoso_inconsistente'] = False
+            if kp.get('avance') is not None:
+                try:
+                    md_ref = _meta_vac_data()
+                    counts_ref = (md_ref or {}).get('counts') or {}
+                    meta_ref = counts_ref.get('dias_meta_total') or 0
+                    goz_ref = counts_ref.get('dias_gozados_con_meta') or 0
+                    if meta_ref > 0:
+                        avance_ref = goz_ref / meta_ref
+                        if abs(kp['avance'] - avance_ref) > 0.20:
+                            kp['sospechoso_inconsistente'] = True
+                            print(f"[PIPE-KPI] AVISO: avance del Excel en vivo ({kp['avance']:.1%}) "
+                                  f"difiere >20pp de la referencia calculada ({avance_ref:.1%}) -- "
+                                  f"la celda de BASE GENERAL puede estar corrupta, revisar el Excel.")
+                except Exception as e:
+                    print('[PIPE-KPI] no se pudo validar avance en vivo contra meta_vac_data:', e)
+
             with _KPIS_LOCK:
                 _KPIS_CACHE['mtime'] = cur_mt
                 _KPIS_CACHE['data'] = kp
