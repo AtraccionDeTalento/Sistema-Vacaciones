@@ -7140,6 +7140,128 @@ def api_health():
     })
 
 
+@app.route('/api/diagnostico/kpis')
+def api_diagnostico_kpis():
+    """Traza de donde sale cada numero de los KPIs de vacaciones, para poder
+    diagnosticar un valor raro (ej. un salto a 90% que baja solo a los pocos
+    minutos) sin adivinar. Pensado para DIAGNOSTICO_DATOS.bat: expone, sin
+    modificar ningun cache ni disparar recalculos pesados donde se puede
+    evitar, el estado de cada fuente de datos que alimenta el dashboard:
+
+      - Si hay una actualizacion (pipeline/bot) corriendo AHORA MISMO -- la
+        causa mas comun de un numero raro es leer un Excel a medio escribir.
+      - Cual de las dos fuentes de 'avance' esta activa: el JSON cacheado del
+        pipeline (estado_pipeline.json) o el Excel en vivo, y por que (mtime
+        vs timestamp declarado).
+      - mtimes de cada archivo fuente (vacaciones, maestro, objetivos).
+      - Los valores que CADA fuente daria en este momento, para comparar.
+    """
+    info = {'timestamp': datetime.now().isoformat()}
+
+    with _pipeline_lock:
+        info['actualizacion_en_curso'] = bool(_pipeline_corriendo['flag'])
+    jobs_activos = [
+        {'job_id': jid, 'estado': j.get('estado'), 'paso': j.get('paso'), 'pct': j.get('pct')}
+        for jid, j in list(_pipeline_jobs.items())
+        if j.get('estado') == 'running'
+    ]
+    info['jobs_pipeline_activos'] = jobs_activos
+    if info['actualizacion_en_curso']:
+        info['aviso'] = ('Hay una actualizacion corriendo AHORA MISMO (bot_adryan / pipeline / '
+                          'bot_maestro). Cualquier KPI leido en este momento puede estar tomado '
+                          'de un Excel a medio escribir -- vuelve a correr este diagnostico '
+                          'cuando termine (revisa jobs_pipeline_activos.pct) para un dato limpio.')
+
+    # Archivo vivo de vacaciones
+    try:
+        vmt = _vac_mtime()
+        info['vacaciones_data_file'] = {
+            'ruta': VACACIONES_DATA_FILE,
+            'existe': os.path.isfile(VACACIONES_DATA_FILE),
+            'mtime': vmt,
+            'mtime_legible': datetime.fromtimestamp(vmt).isoformat() if vmt else None,
+        }
+    except Exception as e:
+        info['vacaciones_data_file'] = {'error': str(e)}
+
+    # estado_pipeline.json -- la fuente que puede ganarle al Excel en vivo si
+    # (segun la logica real de _kpis_vacaciones) su timestamp declarado es
+    # mas nuevo que el mtime del Excel y tiene menos de 1 dia de antiguedad.
+    jpath = os.path.join(SCRIPT_DIR, 'PIPELINE', 'estado_pipeline.json')
+    if os.path.isfile(jpath):
+        try:
+            with open(jpath, 'r', encoding='utf-8') as f:
+                jd = json.load(f)
+            json_ts_raw = jd.get('timestamp')
+            json_ts = None
+            if json_ts_raw:
+                try:
+                    json_ts = datetime.fromisoformat(str(json_ts_raw))
+                except ValueError:
+                    json_ts = None
+            vmt = _vac_mtime()
+            vac_dt = datetime.fromtimestamp(vmt) if vmt else None
+            seria_usado = bool(
+                json_ts is not None
+                and (vac_dt is None or json_ts >= vac_dt)
+                and (datetime.now() - json_ts) <= timedelta(days=1)
+            )
+            info['estado_pipeline_json'] = {
+                'existe': True,
+                'mtime_archivo': os.path.getmtime(jpath),
+                'timestamp_declarado': json_ts_raw,
+                'antiguedad_horas': round((datetime.now() - json_ts).total_seconds() / 3600, 1) if json_ts else None,
+                'seria_usado_ahora_para_avance': seria_usado,
+                'meta_total': jd.get('meta_total'),
+                'registrado_total': jd.get('registrado_total'),
+                'avance': jd.get('avance'),
+            }
+        except Exception as e:
+            info['estado_pipeline_json'] = {'existe': True, 'error': str(e)}
+    else:
+        info['estado_pipeline_json'] = {'existe': False}
+
+    # Maestro de personal (filtro anti-fantasma)
+    try:
+        candidatos = _maestro_path_candidates()
+        dfm, errm = _cargar_maestro_universo()
+        info['maestro'] = {
+            'candidatos_encontrados': candidatos[:5],
+            'archivo_usado': candidatos[0] if candidatos else None,
+            'mtime_usado': os.path.getmtime(candidatos[0]) if candidatos else None,
+            'ok': dfm is not None,
+            'error': errm,
+            'total_personas': int(len(dfm)) if dfm is not None else None,
+        }
+    except Exception as e:
+        info['maestro'] = {'error': str(e)}
+
+    # Archivo de objetivos (usado por cargar_objetivos / envio masivo)
+    try:
+        ruta_obj = _encontrar_objetivo()
+        info['objetivos_data_file'] = {
+            'ruta': ruta_obj,
+            'existe': bool(ruta_obj and os.path.isfile(ruta_obj)),
+            'mtime': os.path.getmtime(ruta_obj) if ruta_obj and os.path.isfile(ruta_obj) else None,
+        }
+    except Exception as e:
+        info['objetivos_data_file'] = {'error': str(e)}
+
+    # Valores actuales que cada fuente daria (sin forzar recalculo si ya
+    # estan cacheados por mtime -- estas funciones ya son cache-aware).
+    try:
+        info['kpis_actuales'] = _kpis_vacaciones() or {}
+    except Exception as e:
+        info['kpis_actuales'] = {'error': str(e)}
+    try:
+        md = _meta_vac_data()
+        info['meta_vac_counts'] = (md or {}).get('counts')
+    except Exception as e:
+        info['meta_vac_counts'] = {'error': str(e)}
+
+    return jsonify({'ok': True, 'diagnostico': info})
+
+
 @app.route('/api/init')
 
 def api_init():
