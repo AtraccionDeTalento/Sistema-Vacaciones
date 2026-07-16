@@ -7184,9 +7184,11 @@ def api_diagnostico_kpis():
     except Exception as e:
         info['vacaciones_data_file'] = {'error': str(e)}
 
-    # estado_pipeline.json -- la fuente que puede ganarle al Excel en vivo si
-    # (segun la logica real de _kpis_vacaciones) su timestamp declarado es
-    # mas nuevo que el mtime del Excel y tiene menos de 1 dia de antiguedad.
+    # estado_pipeline.json -- la fuente que puede ganarle al Excel en vivo.
+    # Misma logica de dos capas que _kpis_vacaciones(): (1) frescura por
+    # timestamp declarado (menos de 6h, y no mas viejo que el Excel), y (2)
+    # consistencia contra la referencia en vivo de _meta_vac_data (rechaza un
+    # JSON "fresco" pero con un avance numericamente imposible).
     jpath = os.path.join(SCRIPT_DIR, 'PIPELINE', 'estado_pipeline.json')
     if os.path.isfile(jpath):
         try:
@@ -7201,16 +7203,35 @@ def api_diagnostico_kpis():
                     json_ts = None
             vmt = _vac_mtime()
             vac_dt = datetime.fromtimestamp(vmt) if vmt else None
-            seria_usado = bool(
+            fresco_por_edad = bool(
                 json_ts is not None
                 and (vac_dt is None or json_ts >= vac_dt)
-                and (datetime.now() - json_ts) <= timedelta(days=1)
+                and (datetime.now() - json_ts) <= timedelta(hours=6)
             )
+            avance_referencia = None
+            diff_pp = None
+            paso_validacion_cruzada = None
+            try:
+                md_ref = _meta_vac_data()
+                counts_ref = (md_ref or {}).get('counts') or {}
+                meta_ref = counts_ref.get('dias_meta_total') or 0
+                goz_ref = counts_ref.get('dias_gozados_con_meta') or 0
+                if meta_ref > 0 and jd.get('avance') is not None:
+                    avance_referencia = goz_ref / meta_ref
+                    diff_pp = round(abs(jd.get('avance') - avance_referencia) * 100, 1)
+                    paso_validacion_cruzada = diff_pp <= 20
+            except Exception:
+                pass
+            seria_usado = bool(fresco_por_edad and (paso_validacion_cruzada in (None, True)))
             info['estado_pipeline_json'] = {
                 'existe': True,
                 'mtime_archivo': os.path.getmtime(jpath),
                 'timestamp_declarado': json_ts_raw,
                 'antiguedad_horas': round((datetime.now() - json_ts).total_seconds() / 3600, 1) if json_ts else None,
+                'fresco_por_edad_menos_6h': fresco_por_edad,
+                'avance_referencia_en_vivo': avance_referencia,
+                'diferencia_puntos_porcentuales': diff_pp,
+                'paso_validacion_cruzada': paso_validacion_cruzada,
                 'seria_usado_ahora_para_avance': seria_usado,
                 'meta_total': jd.get('meta_total'),
                 'registrado_total': jd.get('registrado_total'),
@@ -14700,8 +14721,18 @@ def _kpis_vacaciones():
     dias parezca "mas nuevo" que el Excel y gane silenciosamente por semanas (paso con un
     estado_pipeline.json del 6 de julio que siguio sirviendose el 15 de julio). En vez de
     eso, se usa el campo 'timestamp' que el propio pipeline escribe DENTRO del JSON al
-    generarlo, y ademas se descarta si tiene mas de 1 dia de antiguedad respecto al
-    momento actual, sin importar que diga el Excel."""
+    generarlo, y ademas se descarta si tiene mas de 6 horas de antiguedad respecto al
+    momento actual, sin importar que diga el Excel.
+
+    SEGUNDA CAPA, agregada despues de un caso real: un pipeline.py corrido por COM
+    sobre Excel escribio un estado_pipeline.json con registrado_total inflado (90.2%
+    de avance) mientras el resto del dashboard, calculado en vivo desde el mismo Excel
+    via _meta_vac_data(), mostraba coherentemente 36.5% de cumplimiento -- el JSON
+    quedo "fresco" segun timestamp pero su contenido era numericamente imposible
+    comparado con el resto de la app. Ahora se valida el avance del JSON contra la
+    proporcion gozados/meta de _meta_vac_data() (independiente, ya cacheada, sin costo
+    extra real) y si difieren mas de lo plausible, se descarta el JSON aunque sea
+    reciente y se cae al Excel en vivo."""
     jpath = os.path.join(SCRIPT_DIR, 'PIPELINE', 'estado_pipeline.json')
     try:
         if os.path.isfile(jpath):
@@ -14719,8 +14750,29 @@ def _kpis_vacaciones():
             fresco = (
                 json_ts is not None
                 and (vac_dt is None or json_ts >= vac_dt)
-                and (datetime.now() - json_ts) <= timedelta(days=1)
+                and (datetime.now() - json_ts) <= timedelta(hours=6)
             )
+            if fresco:
+                json_avance = kp.get('avance')
+                if json_avance is not None:
+                    try:
+                        md_ref = _meta_vac_data()
+                        counts_ref = (md_ref or {}).get('counts') or {}
+                        meta_ref = counts_ref.get('dias_meta_total') or 0
+                        goz_ref = counts_ref.get('dias_gozados_con_meta') or 0
+                        if meta_ref > 0:
+                            avance_ref = goz_ref / meta_ref
+                            # avance (JSON) incluye a TODOS (cesados/colegio, a proposito
+                            # distinto del universo de meta_vac_data), asi que un margen
+                            # generoso es normal; una diferencia de mas de 20 puntos ya
+                            # no es "otro universo", es un dato corrupto.
+                            if abs(json_avance - avance_ref) > 0.20:
+                                fresco = False
+                                print(f"[PIPE-KPI] estado_pipeline.json descartado por INCONSISTENTE: "
+                                      f"avance={json_avance:.1%} vs referencia en vivo={avance_ref:.1%} "
+                                      f"(diff > 20pp); leyendo Excel vivo")
+                    except Exception as e:
+                        print('[PIPE-KPI] no se pudo validar contra meta_vac_data:', e)
             if fresco:
                 out = {k: kp.get(k) for k in ('meta_total', 'registrado_total', 'avance', 'avance_cumplimiento')}
                 if out.get('avance') is not None or out.get('registrado_total') is not None:
