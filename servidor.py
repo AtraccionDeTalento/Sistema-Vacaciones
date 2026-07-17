@@ -32,7 +32,7 @@ from datetime import datetime, date, timedelta
 
 import html as html_lib
 
-import glob, json, threading, unicodedata, uuid, shutil, tempfile, re, time, pickle
+import glob, json, threading, unicodedata, uuid, shutil, tempfile, re, time, pickle, hashlib, platform
 from concurrent.futures import ThreadPoolExecutor
 
 def _safe_read_excel(ruta, **kwargs):
@@ -7267,6 +7267,98 @@ def api_diagnostico_kpis():
         }
     except Exception as e:
         info['objetivos_data_file'] = {'error': str(e)}
+
+    # ------------------------------------------------------------------
+    # Seccion "profunda": pensada para comparar dos computadoras donde el
+    # sistema da metas distintas. La causa mas comun de eso NO es un bug de
+    # calculo (la formula es identica en todas las PCs, es el mismo
+    # servidor.py) sino que cada PC esta leyendo un archivo Excel distinto
+    # (o una version distinta del codigo) sin que nada lo avise. Por eso
+    # aqui se expone: (1) el hash exacto de cada archivo fuente -- si dos
+    # PCs muestran hashes distintos, ESA es la causa, no un bug; (2) TODOS
+    # los candidatos de Excel encontrados (no solo el que gano) por si hay
+    # copias duplicadas/viejas en la carpeta que compiten; (3) el commit de
+    # git y si hay cambios locales sin commitear, para descartar que una PC
+    # tenga codigo mas viejo o parchado a mano; (4) version de Python /
+    # pandas / openpyxl y zona horaria, porque la ventana de frescura de 6h
+    # de estado_pipeline.json depende del reloj local.
+    # ------------------------------------------------------------------
+    def _hash_archivo(ruta):
+        try:
+            h = hashlib.sha256()
+            with open(ruta, 'rb') as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                    h.update(chunk)
+            return h.hexdigest()
+        except Exception:
+            return None
+
+    try:
+        info['entorno'] = {
+            'hostname': platform.node(),
+            'usuario': os.environ.get('USERNAME') or os.environ.get('USER'),
+            'python_version': sys.version.split()[0],
+            'pandas_version': pd.__version__,
+            'openpyxl_version': __import__('openpyxl').__version__,
+            'zona_horaria_offset': datetime.now().astimezone().strftime('%z'),
+            'hora_local': datetime.now().isoformat(),
+            'datas_dir': DATAS_DIR,
+            'data_sensible_dir': DATA_SENSIBLE_DIR,
+        }
+    except Exception as e:
+        info['entorno'] = {'error': str(e)}
+
+    try:
+        git_commit = _subprocess.run(
+            ['git', 'rev-parse', 'HEAD'], cwd=SCRIPT_DIR,
+            capture_output=True, text=True, timeout=5
+        )
+        git_status = _subprocess.run(
+            ['git', 'status', '--porcelain'], cwd=SCRIPT_DIR,
+            capture_output=True, text=True, timeout=5
+        )
+        info['version_codigo'] = {
+            'git_commit': git_commit.stdout.strip() if git_commit.returncode == 0 else None,
+            'cambios_locales_sin_commit': [l for l in git_status.stdout.splitlines() if l.strip()] if git_status.returncode == 0 else None,
+            'servidor_py_sha256': _hash_archivo(os.path.abspath(__file__)),
+            'servidor_py_mtime_disco': os.path.getmtime(os.path.abspath(__file__)),
+            'servidor_py_mtime_cargado_en_memoria': _SERVIDOR_MTIME_CARGADO,
+        }
+    except Exception as e:
+        info['version_codigo'] = {'error': str(e)}
+
+    try:
+        vac_candidatos = sorted(
+            glob.glob(os.path.join(DATA_SENSIBLE_DIR, 'Reporte Vacaciones Objetivo*.xlsx')),
+            key=os.path.basename, reverse=True
+        )
+        info['todos_los_candidatos_vacaciones'] = [
+            {
+                'ruta': p,
+                'es_el_usado_ahora': (os.path.abspath(p) == os.path.abspath(VACACIONES_DATA_FILE)),
+                'mtime_legible': datetime.fromtimestamp(os.path.getmtime(p)).isoformat(),
+                'tamano_bytes': os.path.getsize(p),
+                'sha256': _hash_archivo(p),
+            } for p in vac_candidatos
+        ]
+        if os.path.isfile(VACACIONES_DATA_FILE):
+            info['vacaciones_data_file']['sha256'] = _hash_archivo(VACACIONES_DATA_FILE)
+    except Exception as e:
+        info['todos_los_candidatos_vacaciones'] = {'error': str(e)}
+
+    try:
+        maestro_candidatos = _maestro_path_candidates()
+        info['todos_los_candidatos_maestro'] = [
+            {
+                'ruta': p,
+                'es_el_usado_ahora': (maestro_candidatos and os.path.abspath(p) == os.path.abspath(maestro_candidatos[0])),
+                'mtime_legible': datetime.fromtimestamp(os.path.getmtime(p)).isoformat(),
+                'tamano_bytes': os.path.getsize(p),
+                'sha256': _hash_archivo(p),
+            } for p in maestro_candidatos
+        ]
+    except Exception as e:
+        info['todos_los_candidatos_maestro'] = {'error': str(e)}
 
     # Valores actuales que cada fuente daria (sin forzar recalculo si ya
     # estan cacheados por mtime -- estas funciones ya son cache-aware).
@@ -14712,6 +14804,68 @@ def _meta_vac_data():
 def _vac_mtime():
     try: return os.path.getmtime(VACACIONES_DATA_FILE) if os.path.isfile(VACACIONES_DATA_FILE) else None
     except OSError: return None
+
+
+@app.route('/api/diagnostico/celda-sospechosa')
+def api_diagnostico_celda_sospechosa():
+    """Cuando el aviso de PIPE-KPI dice que 'la celda de BASE GENERAL puede
+    estar corrupta' pero no dice CUAL, este endpoint procesa el mismo Excel
+    con la misma logica que _meta_vac_data() y devuelve las filas mas
+    sospechosas de estar inflando el total, para no tener que revisar 1000+
+    filas a mano en Excel. Marca como sospechosa cualquier fila donde:
+      - dias_gozados > 60 (un trimestre no da para gozar mas que eso), o
+      - dias_gozados > objetivo * 3 y objetivo > 0 (goce muy por encima de
+        lo esperado para esa persona), o
+      - objetivo > 60 (una meta de un trimestre tampoco deberia superar eso).
+    Tambien devuelve el top 15 por dias_gozados sin filtrar, para contexto,
+    y el total que estas filas sospechosas aportan al 'dias_gozados_con_meta'
+    que se usa en el avance -- para saber si UNA fila ya explica el salto."""
+    try:
+        md = _meta_vac_data()
+        if not md:
+            return jsonify({'ok': False, 'error': 'No se pudo leer _meta_vac_data() -- revisa si el Excel esta abierto o corrupto.'})
+        rows = md.get('rows') or []
+
+        def _sospechosa(r):
+            reg = r.get('dias_gozados', 0) or 0
+            obj = r.get('objetivo', 0) or 0
+            if reg > 60:
+                return True
+            if obj > 0 and reg > obj * 3:
+                return True
+            if obj > 60:
+                return True
+            return False
+
+        sospechosas = [r for r in rows if _sospechosa(r)]
+        sospechosas.sort(key=lambda r: r.get('dias_gozados', 0) or 0, reverse=True)
+
+        top_general = sorted(rows, key=lambda r: r.get('dias_gozados', 0) or 0, reverse=True)[:15]
+
+        campos = ['matricula', 'nombre', 'departamento', 'area', 'hrbp', 'objetivo',
+                  'dias_gozados', 'vencidas', 'pendientes', 'cumplio', 'sin_meta_con_vac']
+
+        def _resumir(r):
+            return {k: r.get(k) for k in campos}
+
+        aporte_sospechosas = round(sum((r.get('dias_gozados', 0) or 0) for r in sospechosas if not r.get('sin_meta_con_vac')))
+        total_dias_gozados_con_meta = (md.get('counts') or {}).get('dias_gozados_con_meta', 0)
+
+        return jsonify({
+            'ok': True,
+            'total_filas_analizadas': len(rows),
+            'filas_sospechosas': [_resumir(r) for r in sospechosas],
+            'cantidad_sospechosas': len(sospechosas),
+            'dias_gozados_que_aportan_las_sospechosas': aporte_sospechosas,
+            'dias_gozados_con_meta_total': total_dias_gozados_con_meta,
+            'porcentaje_del_total_que_explican': (
+                round(100 * aporte_sospechosas / total_dias_gozados_con_meta, 1)
+                if total_dias_gozados_con_meta else None
+            ),
+            'top_15_general_sin_filtrar': [_resumir(r) for r in top_general],
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
 
 
 def _kpis_vacaciones():

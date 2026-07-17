@@ -142,9 +142,64 @@ try {
     Write-Host ""
     Write-Host "    -- Archivo de objetivos (envio masivo) --"
     Write-Host "    ruta: $($d.objetivos_data_file.ruta)"
+
+    Write-Host ""
+    Write-Host "    -- Version de codigo (para comparar entre PCs) --"
+    Write-Host "    git commit: $($d.version_codigo.git_commit)"
+    if ($d.version_codigo.cambios_locales_sin_commit) {
+        Write-Host "    [AVISO] Hay cambios locales SIN commitear en esta PC:"
+        $d.version_codigo.cambios_locales_sin_commit | ForEach-Object { Write-Host "      $_" }
+    }
+    Write-Host "    servidor.py sha256: $($d.version_codigo.servidor_py_sha256)"
+
+    Write-Host ""
+    Write-Host "    -- Entorno --"
+    Write-Host "    host: $($d.entorno.hostname)  usuario: $($d.entorno.usuario)"
+    Write-Host "    python: $($d.entorno.python_version)  pandas: $($d.entorno.pandas_version)  openpyxl: $($d.entorno.openpyxl_version)"
+    Write-Host "    zona horaria: $($d.entorno.zona_horaria_offset)  hora local: $($d.entorno.hora_local)"
+
+    Write-Host ""
+    Write-Host "    -- Hash del Excel de vacaciones EN USO (compara este valor entre PCs) --"
+    Write-Host "    sha256: $($d.vacaciones_data_file.sha256)"
+
+    Write-Host ""
+    Write-Host "    -- TODOS los candidatos de 'Reporte Vacaciones Objetivo*.xlsx' encontrados --"
+    if ($d.todos_los_candidatos_vacaciones -and $d.todos_los_candidatos_vacaciones.Count -gt 1) {
+        Write-Host "    [SOSPECHOSO] Hay $($d.todos_los_candidatos_vacaciones.Count) archivos que calzan el patron -- solo el marcado USADO cuenta,"
+        Write-Host "    pero si en otra PC hay un archivo mas nuevo por nombre, ESA PC usaria uno distinto."
+    }
+    foreach ($vc in $d.todos_los_candidatos_vacaciones) {
+        $marca = if ($vc.es_el_usado_ahora) { ">> USADO >>" } else { "           " }
+        Write-Host "    $marca $($vc.ruta)"
+        Write-Host "                 mtime: $($vc.mtime_legible)  sha256: $($vc.sha256)"
+    }
+
+    Write-Host ""
+    Write-Host "    -- TODOS los candidatos de 'PersonalMaestroReporte*.xlsx' encontrados --"
+    foreach ($mc in $d.todos_los_candidatos_maestro) {
+        $marca = if ($mc.es_el_usado_ahora) { ">> USADO >>" } else { "           " }
+        Write-Host "    $marca $($mc.ruta)"
+        Write-Host "                 mtime: $($mc.mtime_legible)  sha256: $($mc.sha256)"
+    }
 } catch {
     Write-Host "    [ERROR] No se pudo consultar /api/diagnostico/kpis: $($_.Exception.Message)"
 }
+Write-Host ""
+Write-Host "============================================================"
+Write-Host "  COMO COMPARAR DOS COMPUTADORAS CON METAS DISTINTAS"
+Write-Host "  1. Corre este .bat en AMBAS PCs (con la app abierta en cada una)."
+Write-Host "  2. Compara 'sha256' del Excel de vacaciones EN USO:"
+Write-Host "     - Si el hash es DISTINTO -> estan leyendo archivos distintos,"
+Write-Host "       eso ya explica la diferencia (no es un bug de calculo)."
+Write-Host "     - Si el hash es IGUAL -> mismo archivo exacto en ambas PCs;"
+Write-Host "       revisa entonces 'git commit' y 'servidor.py sha256':"
+Write-Host "       si tambien son iguales, el calculo es identico y hay que"
+Write-Host "       mirar 'estado_pipeline_json' (una PC puede estar usando"
+Write-Host "       el JSON cacheado del pipeline y la otra el Excel en vivo)."
+Write-Host "  3. Revisa 'todos_los_candidatos_vacaciones': si una PC tiene MAS"
+Write-Host "     de un archivo que calza el patron, puede estar usando por"
+Write-Host "     accidente una copia vieja/duplicada en vez de la ultima."
+Write-Host "============================================================"
 Write-Host ""
 
 # ------------------------------------------------------------------
