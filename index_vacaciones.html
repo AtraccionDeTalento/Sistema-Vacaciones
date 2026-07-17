@@ -42,33 +42,82 @@
   <section class="kpis" id="panelKpis">
     <div class="kcard kcard--blue interactive" id="kpiTotal" data-filter="con_meta" title="Colaboradores con objetivo de vacaciones este trimestre">
       <span class="kcard-icon">🎯</span>
-      <span class="kcard-label">CON META</span>
+      <span class="kcard-label wkpi-with-info" style="display:inline-flex;align-items:center;gap:3px">CON META
+        <button class="wkpi-info-btn" title="¿Cómo se calcula este número?">ⓘ</button>
+        <div class="wkpi-popover">
+          <div class="wkpi-pop-title">¿Cómo sale este número?</div>
+          <ul class="wkpi-pop-list">
+            <li>🎯 Colaboradores <b>activos</b> (según el maestro de personal vigente, se excluyen cesados) con un <b>objetivo de días de vacaciones mayor a 0</b> asignado este trimestre en el Excel.</li>
+          </ul>
+          <div class="wkpi-pop-note">Es el denominador base: "Cumplieron", "Parciales" y "Sin iniciar" se calculan como % de este total.</div>
+        </div>
+      </span>
       <b class="kcard-num" id="kTotal"><span class="spin"></span></b>
       <span class="kcard-foot" id="kTotalFoot">objetivo este trimestre</span>
     </div>
     <div class="kcard kcard--purple interactive" id="kpiSinMeta" data-filter="sin_meta_con_vac" title="Colaboradores sin objetivo pero que registraron vacaciones">
       <span class="kcard-icon">🏖️</span>
-      <span class="kcard-label" style="font-size:9.5px!important">SIN META CON VAC.</span>
+      <span class="kcard-label wkpi-with-info" style="font-size:9.5px!important;display:inline-flex;align-items:center;gap:3px">SIN META CON VAC.
+        <button class="wkpi-info-btn" title="¿Cómo se calcula este número?">ⓘ</button>
+        <div class="wkpi-popover">
+          <div class="wkpi-pop-title">¿Cómo sale este número?</div>
+          <ul class="wkpi-pop-list">
+            <li>🏖️ Colaboradores con <b>objetivo = 0</b> (sin meta asignada este trimestre) que <b>sí registraron días de vacaciones</b> en el Excel.</li>
+            <li>📌 Incluye truncos (se pagan, no obligan meta) y casos que aparecen en el detalle de vacaciones pero no en BASE GENERAL.</li>
+          </ul>
+          <div class="wkpi-pop-note">No suman al total "Con meta" ni al % de avance — solo se muestran para visibilidad.</div>
+        </div>
+      </span>
       <b class="kcard-num" id="kSinMeta"><span class="spin"></span></b>
       <span class="kcard-foot" id="kSinMetaFoot">tuvieron vacaciones</span>
     </div>
     <div class="kcard kcard--green interactive" id="kpiEleg" data-filter="cumplieron" title="Cumplieron su meta · clic para ver lista">
       <span class="kcard-icon">✅</span>
-      <span class="kcard-label" id="lblConVac">CUMPLIERON</span>
+      <span class="kcard-label wkpi-with-info" id="lblConVac" style="display:inline-flex;align-items:center;gap:3px">CUMPLIERON
+        <button class="wkpi-info-btn" title="¿Cómo se calcula este número?">ⓘ</button>
+        <div class="wkpi-popover">
+          <div class="wkpi-pop-title">¿Cómo sale este número?</div>
+          <ul class="wkpi-pop-list">
+            <li>✅ % = (colaboradores <b>"Con meta"</b> que ya gozaron días ≥ su objetivo) ÷ total "Con meta" × 100.</li>
+            <li>📅 Los días de abajo (goz. / meta) son la suma real de días tomados vs. la suma de sus objetivos, solo entre quienes cumplieron.</li>
+          </ul>
+          <div class="wkpi-pop-note">"421 con meta · 176 sin meta" muestra ambos conteos lado a lado para contexto — no se suman entre sí.</div>
+        </div>
+      </span>
       <b class="kcard-num" id="kEleg"><span class="spin"></span></b>
       <span class="kcard-foot" id="kElegFoot">con meta · sin meta</span>
       <span class="kcard-days" id="kElegDays"></span>
     </div>
     <div class="kcard kcard--yellow interactive" id="kpiParciales" data-filter="parciales" title="Avance parcial — registraron días pero no completaron la meta">
       <span class="kcard-icon">🔶</span>
-      <span class="kcard-label">PARCIALES</span>
+      <span class="kcard-label wkpi-with-info" style="display:inline-flex;align-items:center;gap:3px">PARCIALES
+        <button class="wkpi-info-btn" title="¿Cómo se calcula este número?">ⓘ</button>
+        <div class="wkpi-popover">
+          <div class="wkpi-pop-title">¿Cómo sale este número?</div>
+          <ul class="wkpi-pop-list">
+            <li>🔶 % = (colaboradores <b>"Con meta"</b> que ya registraron algún día pero AÚN no llegan a su objetivo) ÷ total "Con meta" × 100.</li>
+            <li>🚫 No incluye a "Sin iniciar" (0 días) ni a quienes ya "Cumplieron".</li>
+          </ul>
+          <div class="wkpi-pop-note">Los días de abajo (goz. / meta) se suman solo entre las personas parciales.</div>
+        </div>
+      </span>
       <b class="kcard-num" id="kParciales"><span class="spin"></span></b>
       <span class="kcard-foot" id="kParcialesFoot">en proceso</span>
       <span class="kcard-days" id="kParcialesDays"></span>
     </div>
     <div class="kcard kcard--red interactive" id="kpiSinIniciar" data-filter="sin_iniciar" title="Con meta pero 0 días registrados — máxima alerta">
       <span class="kcard-icon">⚠️</span>
-      <span class="kcard-label">SIN INICIAR</span>
+      <span class="kcard-label wkpi-with-info" style="display:inline-flex;align-items:center;gap:3px">SIN INICIAR
+        <button class="wkpi-info-btn" title="¿Cómo se calcula este número?">ⓘ</button>
+        <div class="wkpi-popover">
+          <div class="wkpi-pop-title">¿Cómo sale este número?</div>
+          <ul class="wkpi-pop-list">
+            <li>⚠️ % = (colaboradores <b>"Con meta"</b> con <b>0 días</b> de vacaciones registrados) ÷ total "Con meta" × 100.</li>
+            <li>🔴 Máxima alerta: tienen objetivo asignado pero no han tomado ni un solo día este trimestre.</li>
+          </ul>
+          <div class="wkpi-pop-note">El denominador es siempre "Con meta", el mismo que usan "Cumplieron" y "Parciales".</div>
+        </div>
+      </span>
       <b class="kcard-num" id="kSinIniciar"><span class="spin"></span></b>
       <span class="kcard-foot" id="kSinIniciarFoot">0 días gozados</span>
     </div>
@@ -724,37 +773,35 @@
 <script src="assets/js/app_completo.js?v=20260715-boot-banner"></script>
 <script src="assets/js/pipeline_vac.js?v=20260626-embudo-v3"></script>
 <script>
-// Popover interactivo del botón ⓘ en "Personas objetivo"
+// Popover interactivo de todos los botones ⓘ "¿Cómo se calcula?" del
+// dashboard. Generico: engancha CUALQUIER .wkpi-info-btn con el
+// .wkpi-popover que sea su hermano dentro del mismo wrapper -- asi un
+// boton/popover nuevo funciona solo, sin tener que tocar este script.
 (function () {
-  function initInfoBtn() {
-    var btn = document.getElementById('sumLeadersInfoBtn');
-    var pop = document.getElementById('sumLeadersPopover');
-    if (btn && pop) {
+  function initInfoBtns() {
+    // avFormulaBtn ya tiene su propio wiring dedicado en pipeline_vac.js
+    // (necesita relacionarse con el modal de detalle) -- no duplicar aqui.
+    var botones = document.querySelectorAll('.wkpi-info-btn:not(#avFormulaBtn)');
+    botones.forEach(function (btn) {
+      var pop = btn.parentElement ? btn.parentElement.querySelector('.wkpi-popover') : null;
+      if (!btn || !pop || btn.dataset.wkpiWired) return;
+      btn.dataset.wkpiWired = '1';
       btn.addEventListener('click', function (e) {
         e.stopPropagation();
-        pop.classList.toggle('open');
+        var yaAbierto = pop.classList.contains('open');
+        document.querySelectorAll('.wkpi-popover.open').forEach(function (p) { p.classList.remove('open'); });
+        if (!yaAbierto) pop.classList.add('open');
       });
-      document.addEventListener('click', function (e) {
-        if (!pop.contains(e.target) && e.target !== btn) pop.classList.remove('open');
-      });
-    }
-
-    var btn2 = document.getElementById('avanceMetaInfoBtn');
-    var pop2 = document.getElementById('avanceMetaPopover');
-    if (btn2 && pop2) {
-      btn2.addEventListener('click', function (e) {
-        e.stopPropagation();
-        pop2.classList.toggle('open');
-      });
-      document.addEventListener('click', function (e) {
-        if (!pop2.contains(e.target) && e.target !== btn2) pop2.classList.remove('open');
-      });
-    }
+    });
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('.wkpi-info-btn') || e.target.closest('.wkpi-popover')) return;
+      document.querySelectorAll('.wkpi-popover.open').forEach(function (p) { p.classList.remove('open'); });
+    });
   }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initInfoBtn);
+    document.addEventListener('DOMContentLoaded', initInfoBtns);
   } else {
-    initInfoBtn();
+    initInfoBtns();
   }
 })();
 </script>
