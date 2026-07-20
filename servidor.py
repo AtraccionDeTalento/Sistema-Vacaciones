@@ -14401,6 +14401,15 @@ def _es_fallo_login_adryan(lineas_str: str) -> bool:
     s = lineas_str.lower()
     return 'login fallido' in s or 'formulario de acceso' in s
 
+def _modulo_faltante(lineas_str: str):
+    """Si el bot/pipeline murio por un import faltante (playwright, xlwings,
+    openpyxl...), devuelve el nombre del modulo; si no, None. El .exe empaquetado
+    NO incluye el Python del pipeline (necesita Excel de escritorio + Chromium,
+    que no se pueden empaquetar), asi que esto pasa la primera vez que se corre
+    en una PC administrativa nueva."""
+    m = re.search(r"No module named '([\w.]+)'", lineas_str)
+    return m.group(1) if m else None
+
 # Marcadores del log del pipeline -> (porcentaje, etiqueta para el front)
 _PIPE_MARCAS = [
     ('Crudo:',        15, 'Leyendo y limpiando el crudo de Adryan'),
@@ -14443,11 +14452,80 @@ def _candidatos_python_admin():
     vistos = set()
     return [c for c in candidatos if c and os.path.isfile(c) and not (c in vistos or vistos.add(c))]
 
-def _pipeline_python():
-    """Python que corre el bot/pipeline (necesita playwright + xlwings). Se detecta
-    y valida automaticamente (no basta con que el archivo exista: se confirma que
-    los modulos importan) en vez de asumir la ruta grabada de la PC original, para
-    que el sistema no se rompa al migrar de computadora. Resultado cacheado en
+_PIPELINE_MODULOS_REQUERIDOS = ['playwright', 'xlwings', 'openpyxl', 'win32com.client']
+_PIPELINE_REQUIREMENTS = os.path.join(_PIPELINE_MOTOR, 'requirements.txt')
+
+def _instalar_dependencias_pipeline(py_exe, job):
+    """Instala en 'py_exe' lo que le falte al bot/pipeline (playwright+Chromium,
+    xlwings, openpyxl, pywin32) para que una PC administrativa nueva quede lista
+    sola, sin que nadie tenga que abrir PowerShell ni correr un .bat aparte. Se
+    dispara automaticamente la primera vez que se detecta que faltan modulos.
+    El progreso se agrega a job['lineas'] para que se vea en el mismo panel
+    donde se ven los logs del bot."""
+    job['lineas'].append('[SETUP] Instalando dependencias del pipeline en esta PC (primera vez; puede tardar unos minutos y necesita internet)...')
+    try:
+        # Un pip viejo (el que trae Python de fabrica) no encuentra wheels
+        # precompilados de paquetes recientes y trata de compilarlos desde
+        # codigo fuente (falla sin Visual Studio instalado). Actualizarlo
+        # primero evita ese fallo.
+        job['lineas'].append('[SETUP] Actualizando pip...')
+        _subprocess.run([py_exe, '-m', 'pip', 'install', '--upgrade', '--no-user', 'pip'],
+                         capture_output=True, timeout=60)
+
+        proc = _subprocess.Popen(
+            [py_exe, '-m', 'pip', 'install', '--upgrade', '--no-user', '-r', _PIPELINE_REQUIREMENTS],
+            stdout=_subprocess.PIPE, stderr=_subprocess.STDOUT,
+            text=True, encoding='utf-8', errors='replace', bufsize=1,
+        )
+        for line in proc.stdout:
+            line = (line or '').rstrip('\n')
+            if line:
+                job['lineas'].append('[SETUP] ' + line)
+        proc.wait()
+        if proc.returncode != 0:
+            job['lineas'].append('[SETUP] ERROR instalando dependencias con pip (revisa conexion a internet/permisos).')
+            return False
+
+        # Registrar las DLLs de pywin32 (necesario para que xlwings encuentre Excel por COM;
+        # sin esto se puede reproducir el fallo "engines.active"/"NoneType has no attribute apps").
+        py_dir = os.path.dirname(py_exe)
+        postinstall = os.path.join(py_dir, 'Scripts', 'pywin32_postinstall.py')
+        if os.path.isfile(postinstall):
+            job['lineas'].append('[SETUP] Registrando pywin32...')
+            try:
+                _subprocess.run([py_exe, postinstall, '-install'], capture_output=True, timeout=60)
+            except Exception:
+                pass
+
+        job['lineas'].append('[SETUP] Descargando el navegador Chromium para Playwright...')
+        proc2 = _subprocess.Popen(
+            [py_exe, '-m', 'playwright', 'install', 'chromium'],
+            stdout=_subprocess.PIPE, stderr=_subprocess.STDOUT,
+            text=True, encoding='utf-8', errors='replace', bufsize=1,
+        )
+        for line in proc2.stdout:
+            line = (line or '').rstrip('\n')
+            if line:
+                job['lineas'].append('[SETUP] ' + line)
+        proc2.wait()
+        if proc2.returncode != 0:
+            job['lineas'].append('[SETUP] ERROR descargando Chromium.')
+            return False
+
+        job['lineas'].append('[SETUP] Dependencias instaladas correctamente.')
+        return True
+    except Exception as e:
+        job['lineas'].append(f'[SETUP] ERROR instalando dependencias: {e}')
+        return False
+
+def _pipeline_python(job=None):
+    """Python que corre el bot/pipeline (necesita playwright + xlwings + openpyxl +
+    pywin32). Se detecta y valida automaticamente (no basta con que el archivo
+    exista: se confirma que los modulos importan) en vez de asumir la ruta grabada
+    de la PC original, para que el sistema no se rompa al migrar de computadora.
+    Si a ninguna instalacion de Python le falta algo, y se paso 'job' (venimos de
+    un job en curso que puede mostrar progreso), se instalan las dependencias
+    automaticamente en el mejor candidato antes de rendirse. Resultado cacheado en
     memoria por el tiempo de vida del proceso del servidor."""
     if _PIPELINE_PYTHON_CACHE['listo']:
         return _PIPELINE_PYTHON_CACHE['ruta']
@@ -14464,16 +14542,24 @@ def _pipeline_python():
     candidatos.extend(_candidatos_python_admin())
 
     for py in candidatos:
-        if _python_tiene_modulos(py, ['playwright', 'xlwings']):
+        if _python_tiene_modulos(py, _PIPELINE_MODULOS_REQUERIDOS):
             _PIPELINE_PYTHON_CACHE.update({'ruta': py, 'listo': True})
             return py
 
-    # Ninguno tiene ambos modulos instalados: se usa el primero que exista igual,
-    # para que el error que se muestre (p.ej. "playwright no esta instalado") sea
-    # claro y accionable en vez de fallar por una ruta rota silenciosamente.
-    ruta = candidatos[0] if candidatos else sys.executable
-    _PIPELINE_PYTHON_CACHE.update({'ruta': ruta, 'listo': True})
-    return ruta
+    # Ningun candidato tiene todo instalado: si hay un Python disponible y un job
+    # visible para el usuario, instalar automaticamente en vez de solo fallar.
+    if candidatos and job is not None and os.path.isfile(_PIPELINE_REQUIREMENTS):
+        py = candidatos[0]
+        if _instalar_dependencias_pipeline(py, job) and _python_tiene_modulos(py, _PIPELINE_MODULOS_REQUERIDOS):
+            _PIPELINE_PYTHON_CACHE.update({'ruta': py, 'listo': True})
+            return py
+
+    # Se rinde: usa el primero que exista igual, para que el error que se muestre
+    # (p.ej. "playwright no esta instalado") sea claro y accionable en vez de
+    # fallar por una ruta rota silenciosamente. No se marca 'listo' para que el
+    # proximo clic reintente la auto-instalacion (por si el fallo fue por falta
+    # de internet momentanea, no por falta de un Python valido).
+    return candidatos[0] if candidatos else sys.executable
 
 # ─── Cache en memoria por mtime para los endpoints lentos de vacaciones ──────
 # El archivo vivo (Reporte ... Q2.xlsx, ~5.5 MB) tarda ~10-25 seg en parsear con
@@ -15047,7 +15133,7 @@ def _bot_adryan_descargar(job):
         return True  # no bloquea: usa el ultimo crudo de Descargas
     job['paso'] = 'Descargando de Adryan'; job['pct'] = max(job['pct'], 5)
     try:
-        cmd = [_pipeline_python(), _BOT_ADRYAN]
+        cmd = [_pipeline_python(job), _BOT_ADRYAN]
         if job.get('fecha_inicio'):
             cmd += ['--fecha-inicio', job['fecha_inicio']]
         if job.get('fecha_termino'):
@@ -15066,9 +15152,15 @@ def _bot_adryan_descargar(job):
         proc.wait()
         if proc.returncode != 0:
             lineas_str = ' '.join(job['lineas'])
-            if 'playwright' in lineas_str.lower() or 'No module named' in lineas_str:
+            mod = _modulo_faltante(lineas_str)
+            if mod or 'playwright' in lineas_str.lower():
                 job['estado'] = 'error'
-                job['error'] = 'Esta funcion requiere playwright, disponible solo en la maquina administrativa. Sube el archivo VACRptMotivo manualmente.'
+                job['error'] = (
+                    f"Falta el modulo de Python '{mod or 'playwright'}' en esta PC administrativa. "
+                    "Corre PIPELINE\\INSTALAR_DEPENDENCIAS.bat una vez en esta maquina "
+                    "(instala playwright + Chromium, xlwings, openpyxl y pywin32) y vuelve a intentar. "
+                    "Mientras tanto puedes subir el archivo VACRptMotivo manualmente."
+                )
             elif 'CryptUnprotectData' in lineas_str or 'no hay contrase' in lineas_str.lower():
                 job['estado'] = 'error'
                 job['error'] = 'NECESITA_PASSWORD_ADRYAN'
@@ -15098,7 +15190,7 @@ def _pipeline_worker(job_id):
         # pipeline abra Excel por COM evita que xlwings no detecte el motor
         # a tiempo (carga del sistema justo tras cerrar el navegador).
         time.sleep(3)
-    cmd = [_pipeline_python(), _PIPELINE_SCRIPT, '--oculto']
+    cmd = [_pipeline_python(job), _PIPELINE_SCRIPT, '--oculto']
     if job.get('crudo'):
         cmd += ['--crudo', job['crudo']]
     job['cmd'] = ' '.join(cmd)
@@ -15141,6 +15233,14 @@ def _pipeline_worker(job_id):
             job['kpis_despues'] = kp
         else:
             job['estado'] = 'error'
+            mod = _modulo_faltante(' '.join(job['lineas']))
+            if mod:
+                job['error'] = (
+                    f"Falta el modulo de Python '{mod}' en esta PC administrativa. "
+                    "Corre PIPELINE\\INSTALAR_DEPENDENCIAS.bat una vez en esta maquina "
+                    "(instala playwright, xlwings, openpyxl y pywin32) y vuelve a intentar. "
+                    "Esta PC ademas necesita Excel de escritorio instalado."
+                )
     except Exception as e:
         job['estado'] = 'error'; job['error'] = str(e)
     finally:
@@ -15201,7 +15301,7 @@ def _pipeline_maestro_worker(job_id):
         if not os.path.isfile(_BOT_MAESTRO):
             job['estado'] = 'error'; job['error'] = 'No existe bot_maestro.py'
             return
-        cmd = [_pipeline_python(), _BOT_MAESTRO]
+        cmd = [_pipeline_python(job), _BOT_MAESTRO]
         proc = _subprocess.Popen(
             cmd, cwd=os.path.dirname(_BOT_MAESTRO),
             stdout=_subprocess.PIPE, stderr=_subprocess.STDOUT,

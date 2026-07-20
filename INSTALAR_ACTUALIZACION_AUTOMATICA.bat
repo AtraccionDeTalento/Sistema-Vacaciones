@@ -108,7 +108,7 @@ $archivosLista = @(
     'servidor.py', 'index_vacaciones.html', 'enviar_cola_outlook.py', '_bp_map.py',
     'requirements.txt', 'assets/js/app_completo.js', 'assets/js/pipeline_vac.js',
     'assets/css/styles.css', 'PIPELINE/motor/pipeline.py', 'PIPELINE/motor/vac_lib.py',
-    'PIPELINE/motor/config.json', 'PIPELINE/bot_adryan/bot_adryan.py',
+    'PIPELINE/motor/config.json', 'PIPELINE/motor/requirements.txt', 'PIPELINE/bot_adryan/bot_adryan.py',
     'PIPELINE/bot_adryan/bot_maestro.py', 'PIPELINE/bot_adryan/guardar_password.py'
 ) -join "','"
 

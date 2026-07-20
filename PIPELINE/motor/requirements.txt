@@ -2,3 +2,7 @@ openpyxl>=3.1
 pandas>=2.0
 xlwings>=0.30
 pywin32>=305
+playwright>=1.40
+# greenlet 3.2+ no publica wheel para Python 3.9 en Windows; sin fijarlo, pip
+# intenta compilarlo desde codigo fuente y falla si no hay Visual Studio.
+greenlet==3.1.1
