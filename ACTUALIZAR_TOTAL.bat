@@ -103,6 +103,36 @@ Write-Host "    Instalacion: $Aqui"
 Write-Host ""
 
 # ------------------------------------------------------------------
+# [1b/6] Verificar que el MOTOR de Electron este completo -- ffmpeg.dll,
+# d3dcompiler_47.dll, etc. son binarios de Chromium que vienen empaquetados
+# junto al .exe, NO codigo de esta app. Este script solo actualiza servidor.py/
+# index_vacaciones.html/assets/PIPELINE (los archivos que SI viven en GitHub);
+# nunca toca esos .dll. Si faltan, la instalacion quedo incompleta (copia
+# parcial por USB/red, antivirus que puso en cuarentena uno de estos archivos,
+# etc.) y hace falta una copia NUEVA y COMPLETA de la carpeta -- ningun
+# actualizador de codigo puede reparar eso. Se detecta ahora, antes de gastar
+# tiempo actualizando codigo sobre una instalacion que de todas formas no va
+# a abrir.
+# ------------------------------------------------------------------
+$archivosMotor = @('ffmpeg.dll', 'd3dcompiler_47.dll', 'libEGL.dll', 'libGLESv2.dll', 'resources\app.asar')
+$motorFaltante = @($archivosMotor | Where-Object { -not (Test-Path (Join-Path $Aqui $_)) })
+if ($motorFaltante.Count -gt 0) {
+    Write-Host "[ERROR] Esta instalacion esta INCOMPLETA -- le faltan archivos del motor de Electron:"
+    foreach ($f in $motorFaltante) { Write-Host "    - $f" }
+    Write-Host ""
+    Write-Host "    Esto NO es un problema de codigo (lo que este script actualiza) -- son archivos"
+    Write-Host "    binarios que vienen con el instalador. Pasa cuando la carpeta se copio a medias"
+    Write-Host "    (USB/red interrumpida) o un antivirus puso en cuarentena alguno de estos .dll."
+    Write-Host ""
+    Write-Host "    SOLUCION: pide una copia NUEVA y COMPLETA de la instalacion (todo dist_electron"
+    Write-Host "    \win-unpacked, o mejor, el instalador 'Sistema Vacaciones USIL Setup 1.0.0.exe')"
+    Write-Host "    y reemplaza esta carpeta entera -- actualizar solo el codigo no alcanza aqui."
+    Write-Host ""
+    Read-Host "Presiona Enter para cerrar"
+    exit 1
+}
+
+# ------------------------------------------------------------------
 # [2/6] Matar procesos viejos
 # ------------------------------------------------------------------
 Write-Host "[2/6] Cerrando procesos viejos..."
