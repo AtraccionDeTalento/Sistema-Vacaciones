@@ -22,10 +22,21 @@
     </div>
   </div>
   <div class="top-right">
+    <button class="btn" id="btnActualizarSistema" title="Baja la última versión del código desde GitHub y reinicia la app -- úsalo si algo se ve raro o desactualizado"
+            style="background:#fff;color:#0f6ea5;border-color:#0f6ea5;font-weight:700">⬇️ Actualizar sistema</button>
     <button class="btn" id="btnActualizarVac" title="Actualizar con el último reporte de Adryan"
             style="background:#1f9d55;color:#fff;border-color:#1f9d55;font-weight:700">🔄 Actualizar vacaciones</button>
   </div>
 </header>
+
+<!-- Overlay de "Actualizar sistema" -- pantalla completa mientras baja archivos
+     y reinicia el proceso; se cierra sola cuando /api/health vuelve a responder
+     con un boot_time distinto al de antes de pedir la actualizacion. -->
+<div id="actSistemaOverlay" style="display:none;position:fixed;inset:0;background:rgba(15,32,50,.92);z-index:99999;color:#fff;align-items:center;justify-content:center;flex-direction:column;gap:14px;font-family:inherit">
+  <div class="boot-banner-spin" style="border-top-color:#fff"></div>
+  <div id="actSistemaTexto" style="font-size:15px;font-weight:600">Descargando la última versión...</div>
+  <div id="actSistemaDetalle" style="font-size:12px;opacity:.7"></div>
+</div>
 
 <!-- Banner visible mientras el sistema carga/recarga datos, para que no parezca
      que la pantalla se quedo en blanco (antes solo habia spinners pequenos
@@ -803,6 +814,104 @@
   } else {
     initInfoBtns();
   }
+})();
+</script>
+
+<!-- Boton "Actualizar sistema": baja el codigo mas reciente de GitHub y
+     reinicia el proceso -- pensado como respaldo manual para cuando el
+     auto-actualizador de Electron no corre (main.js queda horneado dentro del
+     .exe al empaquetar, asi que no puede auto-actualizarse a si mismo; ver
+     comentario en servidor.py junto a /api/sistema/actualizar). -->
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var bootTimeInicial = null;
+  var pollTimer = null;
+
+  function mostrarOverlay(texto, detalle) {
+    var ov = $('actSistemaOverlay');
+    if (ov) ov.style.display = 'flex';
+    if ($('actSistemaTexto')) $('actSistemaTexto').textContent = texto || 'Actualizando...';
+    if ($('actSistemaDetalle')) $('actSistemaDetalle').textContent = detalle || '';
+  }
+  function ocultarOverlay() {
+    var ov = $('actSistemaOverlay');
+    if (ov) ov.style.display = 'none';
+  }
+
+  function esperarReinicio() {
+    // El proceso viejo se cierra y uno nuevo lo reemplaza (ver comentario en
+    // servidor.py) -- durante ese instante el servidor no responde. Se espera
+    // a que /api/health vuelva a contestar con un boot_time DISTINTO al de
+    // antes de pedir la actualizacion (no basta con que responda: si
+    // respondiera con el mismo boot_time seria el proceso viejo, no el nuevo).
+    var intentos = 0;
+    pollTimer = setInterval(function () {
+      intentos++;
+      fetch('/api/health').then(function (r) { return r.json(); }).then(function (h) {
+        if (h && h.boot_time && h.boot_time !== bootTimeInicial) {
+          clearInterval(pollTimer);
+          mostrarOverlay('¡Listo! Cargando la app actualizada...', '');
+          setTimeout(function () { location.reload(); }, 800);
+        } else if (intentos > 60) {
+          clearInterval(pollTimer);
+          mostrarOverlay('Esto está tardando más de lo esperado.', 'Cierra y vuelve a abrir la app manualmente si no reacciona en un minuto más.');
+        }
+      }).catch(function () {
+        if (intentos > 60) {
+          clearInterval(pollTimer);
+          mostrarOverlay('Esto está tardando más de lo esperado.', 'Cierra y vuelve a abrir la app manualmente si no reacciona en un minuto más.');
+        }
+        // mientras el proceso se reinicia, /api/health puede fallar de forma
+        // transitoria -- no es error, se sigue reintentando.
+      });
+    }, 1000);
+  }
+
+  function pollProgreso() {
+    fetch('/api/sistema/actualizar/estado').then(function (r) { return r.json(); }).then(function (j) {
+      var job = j && j.job;
+      if (!job || !job.estado) return;
+      if (job.estado === 'corriendo') {
+        var pct = job.total ? Math.round(((job.progreso || 0) / job.total) * 100) : 0;
+        mostrarOverlay('Descargando la última versión...', (job.archivo_actual || '') + '  (' + pct + '%)');
+      } else if (job.estado === 'reiniciando') {
+        clearInterval(window._actSistemaProgresoTimer);
+        mostrarOverlay('Reiniciando el sistema...', 'Un momento, el proceso se está reemplazando con el código nuevo.');
+        esperarReinicio();
+      } else if (job.estado === 'error') {
+        clearInterval(window._actSistemaProgresoTimer);
+        mostrarOverlay('No se pudo actualizar', job.error || 'Error desconocido. Intenta de nuevo o corre ACTUALIZAR_Y_ABRIR_TOTAL.bat manualmente.');
+        setTimeout(ocultarOverlay, 5000);
+      }
+    }).catch(function () {});
+  }
+
+  function iniciar() {
+    var btn = $('btnActualizarSistema');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (!confirm('Esto va a descargar la última versión del código desde GitHub y reiniciar la app. ¿Continuar?')) return;
+      fetch('/api/health').then(function (r) { return r.json(); }).then(function (h) {
+        bootTimeInicial = h && h.boot_time;
+      }).catch(function () {}).then(function () {
+        mostrarOverlay('Iniciando actualización...', '');
+        fetch('/api/sistema/actualizar', { method: 'POST' }).then(function (r) { return r.json(); }).then(function (j) {
+          if (!j || !j.ok) {
+            mostrarOverlay('No se pudo iniciar', (j && j.error) || 'Error desconocido.');
+            setTimeout(ocultarOverlay, 4000);
+            return;
+          }
+          window._actSistemaProgresoTimer = setInterval(pollProgreso, 800);
+        }).catch(function (e) {
+          mostrarOverlay('No se pudo iniciar', '' + e);
+          setTimeout(ocultarOverlay, 4000);
+        });
+      });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);
+  else iniciar();
 })();
 </script>
 

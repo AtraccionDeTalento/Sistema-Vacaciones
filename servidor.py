@@ -7140,6 +7140,148 @@ def api_health():
     })
 
 
+# ─── Boton "Actualizar sistema" (barra superior) ────────────────────────────
+# El auto-actualizador de Electron (main.js/verificarActualizacion) tiene un
+# problema de fondo: main.js mismo esta empaquetado dentro de resources/app.asar
+# al construir el .exe, asi que aunque main.js baje una copia nueva de si mismo
+# a disco, ESA copia nunca se ejecuta -- Electron sigue corriendo el main.js
+# viejo, horneado en el instalador, hasta el proximo reinstall. Por eso "si no
+# funciona el automatico" hacia falta un boton manual. Este SI funciona porque
+# vive en servidor.py (interpretado por Python en cada arranque, no empaquetado
+# en un binario) -- la misma razon por la que REPARAR_TOTAL.bat/
+# ACTUALIZAR_Y_ABRIR_TOTAL.bat si logran actualizar el resto de los archivos.
+_ARCHIVOS_ACTUALIZABLES = [
+    'servidor.py', 'index_vacaciones.html', 'enviar_cola_outlook.py', '_bp_map.py',
+    'requirements.txt', 'assets/js/app_completo.js', 'assets/js/pipeline_vac.js',
+    'assets/css/styles.css', 'PIPELINE/motor/pipeline.py', 'PIPELINE/motor/vac_lib.py',
+    'PIPELINE/motor/config.json', 'PIPELINE/motor/requirements.txt',
+    'PIPELINE/bot_adryan/bot_adryan.py', 'PIPELINE/bot_adryan/bot_maestro.py',
+    'PIPELINE/bot_adryan/guardar_password.py',
+]
+_REPO_GITHUB = 'AtraccionDeTalento/Sistema-Vacaciones'
+_BRANCH_GITHUB = 'main'
+_actualizar_sistema_job = {'estado': None}
+_actualizar_sistema_lock = threading.Lock()
+
+
+def _sha256_normalizado(contenido: bytes) -> str:
+    """Normaliza CRLF->LF antes de hashear -- mismo criterio que los .bat de
+    reparacion, para que la comparacion sea sobre el CONTENIDO real y no sobre
+    si el archivo en disco tiene finales de linea de Windows."""
+    texto = contenido.decode('utf-8', errors='replace').replace('\r\n', '\n')
+    return hashlib.sha256(texto.encode('utf-8')).hexdigest()
+
+
+def _actualizar_sistema_worker(job):
+    import urllib.request
+    base_dir = SCRIPT_DIR
+    ua = {'User-Agent': 'sistema-vacaciones-actualizar-boton'}
+    try:
+        req = urllib.request.Request(
+            f'https://api.github.com/repos/{_REPO_GITHUB}/commits/{_BRANCH_GITHUB}', headers=ua)
+        with urllib.request.urlopen(req, timeout=15) as r:
+            remoto = json.loads(r.read().decode('utf-8'))['sha']
+    except Exception as e:
+        job['estado'] = 'error'
+        job['error'] = f'Sin conexion a GitHub: {e}'
+        return
+
+    job['total'] = len(_ARCHIVOS_ACTUALIZABLES)
+    ok, fallidos = 0, []
+    for idx, rel in enumerate(_ARCHIVOS_ACTUALIZABLES):
+        job['archivo_actual'] = rel
+        job['progreso'] = idx
+        url = f'https://raw.githubusercontent.com/{_REPO_GITHUB}/{_BRANCH_GITHUB}/{rel}'
+        destino = os.path.join(base_dir, rel.replace('/', os.sep))
+        bajado = False
+        for _intento in range(3):
+            try:
+                req = urllib.request.Request(url, headers=ua)
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    contenido = r.read()
+                os.makedirs(os.path.dirname(destino), exist_ok=True)
+                tmp = destino + '.tmp'
+                with open(tmp, 'wb') as f:
+                    f.write(contenido)
+                if os.path.isfile(destino):
+                    os.remove(destino)
+                os.rename(tmp, destino)
+                with open(destino, 'rb') as f:
+                    verif = f.read()
+                if _sha256_normalizado(verif) == _sha256_normalizado(contenido):
+                    bajado = True
+                break
+            except Exception:
+                time.sleep(0.5)
+        if bajado:
+            ok += 1
+        else:
+            fallidos.append(rel)
+
+    job['ok'] = ok
+    job['fallidos'] = fallidos
+    if fallidos:
+        job['estado'] = 'error'
+        job['error'] = f"{len(fallidos)} archivo(s) no se pudieron actualizar: {', '.join(fallidos)}"
+        return
+
+    try:
+        with open(os.path.join(base_dir, '.version_commit'), 'w', encoding='utf-8') as f:
+            f.write(remoto)
+    except Exception:
+        pass
+
+    job['commit'] = remoto
+    job['estado'] = 'reiniciando'
+
+    def _reiniciar():
+        # IMPORTANTE: se probo con os.execv (reemplazo de imagen de proceso,
+        # el patron tipico en Unix) y en Windows NO es confiable -- en
+        # desarrollo dejo el servidor muerto sin volver a levantar nunca
+        # (Windows no tiene un exec() real; Python lo emula, y esa emulacion
+        # fallo aqui). El patron que SI funciona: lanzar un proceso Python
+        # NUEVO e independiente (que reintenta el bind al puerto 5002 hasta
+        # que este proceso lo libere -- ver el retry en el bloque __main__),
+        # esperar un instante, y recien ahi terminar este proceso con
+        # os._exit (cierre inmediato, libera el puerto ya).
+        time.sleep(1.0)
+        try:
+            _subprocess.Popen(
+                [sys.executable, os.path.abspath(__file__)],
+                cwd=base_dir,
+                creationflags=_subprocess.DETACHED_PROCESS | _subprocess.CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+            )
+        except Exception as e:
+            job['estado'] = 'error'
+            job['error'] = f'No se pudo lanzar el proceso nuevo: {e}'
+            return
+        time.sleep(0.5)
+        os._exit(0)
+
+    threading.Thread(target=_reiniciar, daemon=True).start()
+
+
+@app.route('/api/sistema/actualizar', methods=['POST'])
+def api_sistema_actualizar():
+    """Dispara la actualizacion manual -- el boton 'Actualizar sistema' de la
+    barra superior. A diferencia del auto-actualizador de Electron, este SI
+    logra que el codigo nuevo quede corriendo de verdad (ver comentario arriba)."""
+    with _actualizar_sistema_lock:
+        if _actualizar_sistema_job.get('estado') == 'corriendo':
+            return jsonify({'ok': False, 'error': 'Ya hay una actualizacion en curso.'})
+        _actualizar_sistema_job.clear()
+        _actualizar_sistema_job.update({'estado': 'corriendo', 'ok': 0, 'progreso': 0,
+                                         'total': len(_ARCHIVOS_ACTUALIZABLES), 'fallidos': []})
+    threading.Thread(target=_actualizar_sistema_worker, args=(_actualizar_sistema_job,), daemon=True).start()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/sistema/actualizar/estado')
+def api_sistema_actualizar_estado():
+    return jsonify({'ok': True, 'job': dict(_actualizar_sistema_job)})
+
+
 @app.route('/api/diagnostico/kpis')
 def api_diagnostico_kpis():
     """Traza de donde sale cada numero de los KPIs de vacaciones, para poder
@@ -16136,8 +16278,23 @@ if __name__ == '__main__':
 
     try:
         from waitress import serve
-        print('[OK] Servidor iniciado con waitress en http://127.0.0.1:5002')
-        serve(app, host='0.0.0.0', port=5002, threads=8)
+        # Reintenta el bind si el puerto esta ocupado: pasa justo despues de
+        # pedir 'Actualizar sistema' (boton en la barra superior), donde el
+        # proceso viejo tarda un instante en liberar el puerto 5002 despues
+        # de lanzar este proceso nuevo (ver _actualizar_sistema_worker). Sin
+        # este retry, este proceso nuevo moriria de inmediato con
+        # "address already in use" justo cuando mas se necesita que arranque.
+        for _intento_bind in range(20):
+            try:
+                print('[OK] Servidor iniciado con waitress en http://127.0.0.1:5002')
+                serve(app, host='0.0.0.0', port=5002, threads=8)
+                break
+            except OSError as e:
+                if _intento_bind < 19:
+                    print(f'[BOOT] Puerto 5002 ocupado (posible reinicio en curso), reintentando en 1s... ({_intento_bind + 1}/20)')
+                    time.sleep(1)
+                else:
+                    raise
     except ImportError:
         print('[WARN] waitress no disponible, usando Flask dev server')
         app.run(host='0.0.0.0', port=5002, debug=False, threaded=True)
