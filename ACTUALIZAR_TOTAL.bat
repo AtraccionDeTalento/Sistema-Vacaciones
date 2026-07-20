@@ -37,14 +37,16 @@ Write-Host "    1. Mata procesos viejos (el codigo en memoria no se"
 Write-Host "       actualiza solo)."
 Write-Host "    2. Descarga y verifica (SHA256) todo el codigo desde"
 Write-Host "       GitHub -- igual que REPARAR_TOTAL.bat."
-Write-Host "    3. LIMPIA duplicados y basura real: copias viejas de"
+Write-Host "    3. Si esta configurado (pa_config.json -> sync_excel_desde_host),"
+Write-Host "       sincroniza el Excel de vacaciones desde la PC administrativa --"
+Write-Host "       para que TODAS las PCs muestren la misma meta, no cada una"
+Write-Host "       la copia que le llego la ultima vez que alguien se la copio."
+Write-Host "    4. LIMPIA duplicados y basura real: copias viejas de"
 Write-Host "       Maestro de Personal, backups sueltos del Excel de"
 Write-Host "       vacaciones (_previo_, _BACKUP_, _viejo_), cache"
-Write-Host "       (.pkl) desactualizado. NO borra el Excel que la app"
-Write-Host "       esta usando ahora mismo -- la app sigue funcionando"
-Write-Host "       de inmediato, sin tener que volver a loguearse en"
-Write-Host "       Adryan ni esperar una descarga nueva."
-Write-Host "    4. Reabre la app y confirma con hash que quedo"
+Write-Host "       (.pkl) desactualizado. NO borra el Excel en uso -- la"
+Write-Host "       app sigue funcionando de inmediato."
+Write-Host "    5. Reabre la app y confirma con hash que quedo"
 Write-Host "       corriendo el codigo nuevo de verdad."
 Write-Host "============================================================"
 Write-Host ""
@@ -57,9 +59,9 @@ $resultado = [ordered]@{
 }
 
 # ------------------------------------------------------------------
-# [1/6] Ubicar la instalacion
+# [1/7] Ubicar la instalacion
 # ------------------------------------------------------------------
-Write-Host "[1/6] Buscando la instalacion en esta PC..."
+Write-Host "[1/7] Buscando la instalacion en esta PC..."
 $candidatosRaw = New-Object System.Collections.Generic.List[object]
 function Add-Candidato($ruta, $etiqueta) {
     if ($ruta) { $candidatosRaw.Add([pscustomobject]@{ ruta = $ruta.TrimEnd('\'); etiqueta = $etiqueta }) }
@@ -162,7 +164,7 @@ Write-Host "    Instalacion: $Aqui"
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [1b/6] Verificar que el MOTOR de Electron este completo -- ffmpeg.dll,
+# [1b/7] Verificar que el MOTOR de Electron este completo -- ffmpeg.dll,
 # d3dcompiler_47.dll, etc. son binarios de Chromium que vienen empaquetados
 # junto al .exe, NO codigo de esta app. Este script solo actualiza servidor.py/
 # index_vacaciones.html/assets/PIPELINE (los archivos que SI viven en GitHub);
@@ -192,9 +194,9 @@ if ($motorFaltante.Count -gt 0) {
 }
 
 # ------------------------------------------------------------------
-# [2/6] Matar procesos viejos
+# [2/7] Matar procesos viejos
 # ------------------------------------------------------------------
-Write-Host "[2/6] Cerrando procesos viejos..."
+Write-Host "[2/7] Cerrando procesos viejos..."
 $matados = 0
 Get-Process -Name 'Sistema Vacaciones USIL' -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue; $matados++ }
 Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
@@ -205,7 +207,7 @@ Write-Host "    $matados proceso(s) cerrado(s)."
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [3/6] Descargar y verificar codigo desde GitHub
+# [3/7] Descargar y verificar codigo desde GitHub
 # ------------------------------------------------------------------
 $archivos = @(
     'servidor.py', 'index_vacaciones.html', 'enviar_cola_outlook.py', '_bp_map.py',
@@ -223,7 +225,7 @@ function Get-Sha256OfBytes($bytes) {
     finally { $sha.Dispose() }
 }
 
-Write-Host "[3/6] Descargando y verificando codigo desde GitHub..."
+Write-Host "[3/7] Descargando y verificando codigo desde GitHub..."
 $remoteVer = $null
 try {
     $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/commits/$Branch" -Headers @{ 'User-Agent' = 'actualizar-total' } -TimeoutSec 15 -UseBasicParsing -ErrorAction Stop
@@ -269,7 +271,72 @@ $resultado.pasos['3_codigo'] = @{ ok = $ok; total = $archivos.Count; fallidos = 
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [4/6] Limpiar duplicados y basura real -- SIN tocar el Excel que la app
+# [4/7] Sincronizar el Excel de vacaciones desde la PC administrativa. Solo
+# UNA PC (la que tiene Excel + xlwings + playwright) corre el pipeline y
+# recibe datos frescos de Adryan todos los dias; las demas se quedaban para
+# siempre con la copia local que tenian desde la ultima vez que alguien se
+# las copio a mano -- eso, no un bug de calculo, es la causa real de que la
+# meta muestre numeros distintos en cada PC (mismos datos = mismo resultado,
+# pero si cada PC tiene un Excel DISTINTO, el resultado tambien lo es).
+#
+# Requiere UNA sola configuracion, una vez, en pa_config.json de esta
+# instalacion: 'sync_excel_desde_host' con el nombre o IP de la PC
+# administrativa (ej. "LAPTOP-JLOPEZP" o "10.0.0.23"). Sin configurar, este
+# paso se salta solo -- no rompe nada, simplemente no sincroniza el Excel
+# (sigue funcionando como hasta ahora, solo con el codigo actualizado).
+# ------------------------------------------------------------------
+Write-Host "[4/7] Sincronizando Excel de vacaciones desde la PC administrativa..."
+$hostAdmin = $null
+$paConfigPath = Join-Path $Aqui 'pa_config.json'
+if (Test-Path $paConfigPath) {
+    try {
+        $paConfig = Get-Content -Path $paConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($paConfig.sync_excel_desde_host) { $hostAdmin = "$($paConfig.sync_excel_desde_host)".Trim() }
+    } catch {
+        Write-Host "    [AVISO] No se pudo leer pa_config.json -- se omite este paso."
+    }
+}
+if (-not $hostAdmin) {
+    Write-Host "    No configurado (sync_excel_desde_host vacio en pa_config.json) -- se omite."
+    Write-Host "    Para activarlo: agrega en pa_config.json de la PC ADMINISTRATIVA (la que"
+    Write-Host "    corre el pipeline) el nombre/IP de ESA misma PC, y copia ese mismo valor"
+    Write-Host "    al pa_config.json de las demas. Ejemplo: 'sync_excel_desde_host': 'NOMBRE-PC'."
+    $resultado.pasos['4_excel_sync'] = @{ configurado = $false }
+} elseif ($hostAdmin -eq $env:COMPUTERNAME) {
+    Write-Host "    Esta ES la PC administrativa ($hostAdmin) -- nada que sincronizar."
+    $resultado.pasos['4_excel_sync'] = @{ configurado = $true; es_admin = $true }
+} else {
+    $urlExcel = "http://${hostAdmin}:5002/api/sistema/excel-actual"
+    Write-Host "    Descargando desde: $urlExcel"
+    try {
+        $resp = Invoke-WebRequest -Uri $urlExcel -TimeoutSec 30 -UseBasicParsing -ErrorAction Stop
+        $cd = $resp.Headers['Content-Disposition']
+        $nombreArchivo = 'Reporte Vacaciones Objetivo.xlsx'
+        if ($cd -and ($cd -match 'filename="?([^";]+)"?')) { $nombreArchivo = $Matches[1] }
+        $dsDir = Join-Path $Aqui 'DATA SENSIBLE'
+        New-Item -ItemType Directory -Path $dsDir -Force | Out-Null
+        $destinoExcel = Join-Path $dsDir $nombreArchivo
+        # Respaldo del que ya habia (reversible), nunca se pisa a ciegas.
+        if (Test-Path $destinoExcel) {
+            $stampExcel = Get-Date -Format 'yyyyMMdd_HHmmss'
+            $backupDir = Join-Path $Aqui "_LIMPIEZA_AUTOMATICA_$stampExcel\DATA SENSIBLE"
+            New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+            Move-Item -LiteralPath $destinoExcel -Destination (Join-Path $backupDir $nombreArchivo) -Force -ErrorAction SilentlyContinue
+        }
+        [IO.File]::WriteAllBytes($destinoExcel, $resp.Content)
+        Write-Host "    [OK] Excel sincronizado: $nombreArchivo ($([math]::Round($resp.Content.Length/1MB,1)) MB)"
+        $resultado.pasos['4_excel_sync'] = @{ configurado = $true; ok = $true; host = $hostAdmin; archivo = $nombreArchivo }
+    } catch {
+        Write-Host "    [AVISO] No se pudo descargar de $hostAdmin -- $($_.Exception.Message)"
+        Write-Host "    (¿esa PC esta prendida y con la app abierta? ¿mismo Wifi/red? ¿firewall"
+        Write-Host "    bloqueando el puerto 5002? Se continua con el Excel local que ya habia.)"
+        $resultado.pasos['4_excel_sync'] = @{ configurado = $true; ok = $false; host = $hostAdmin; error = "$($_.Exception.Message)" }
+    }
+}
+Write-Host ""
+
+# ------------------------------------------------------------------
+# [5/7] Limpiar duplicados y basura real -- SIN tocar el Excel que la app
 # esta usando ahora mismo. Solo mueve a respaldo lo que es inequivocamente
 # una copia vieja: backups del pipeline (_previo_, _BACKUP_, _viejo_) y
 # copias antiguas del Maestro de Personal (se queda solo con la mas
@@ -277,7 +344,7 @@ Write-Host ""
 # inmediato despues de este script, sin depender de volver a loguearse en
 # Adryan ni de esperar una descarga nueva.
 # ------------------------------------------------------------------
-Write-Host "[4/6] Limpiando duplicados y respaldos sueltos..."
+Write-Host "[5/7] Limpiando duplicados y respaldos sueltos..."
 $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 $respaldo = Join-Path $Aqui "_LIMPIEZA_AUTOMATICA_$stamp"
 $movidos = 0
@@ -334,9 +401,9 @@ $resultado.pasos['4_limpieza'] = @{ movidos = $movidos; respaldo = if ($movidos 
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [5/6] Reabrir la app
+# [6/7] Reabrir la app
 # ------------------------------------------------------------------
-Write-Host "[5/6] Reabriendo la app..."
+Write-Host "[6/7] Reabriendo la app..."
 $exePath = Join-Path $Aqui $exeName
 if (Test-Path $exePath) {
     Start-Process $exePath
@@ -347,10 +414,10 @@ if (Test-Path $exePath) {
 Write-Host ""
 
 # ------------------------------------------------------------------
-# [6/6] Verificar que el proceso levantado usa el codigo nuevo (hash en
+# [7/7] Verificar que el proceso levantado usa el codigo nuevo (hash en
 # memoria vs GitHub -- no basta con que el archivo en disco haya cambiado).
 # ------------------------------------------------------------------
-Write-Host "[6/6] Verificando que el proceso levantado usa el codigo nuevo..."
+Write-Host "[7/7] Verificando que el proceso levantado usa el codigo nuevo..."
 $health = $null
 for ($i = 1; $i -le 20; $i++) {
     try { $health = Invoke-RestMethod -Uri "http://127.0.0.1:5002/api/health" -TimeoutSec 5 -ErrorAction Stop; if ($health) { break } } catch {}

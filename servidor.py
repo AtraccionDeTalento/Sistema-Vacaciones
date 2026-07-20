@@ -7282,6 +7282,25 @@ def api_sistema_actualizar_estado():
     return jsonify({'ok': True, 'job': dict(_actualizar_sistema_job)})
 
 
+@app.route('/api/sistema/excel-actual')
+def api_sistema_excel_actual():
+    """Sirve el Excel de vacaciones EN USO por esta instalacion (el mismo que
+    lee el dashboard), para que otras PCs sin pipeline/Adryan propio puedan
+    sincronizarse contra el mismo dato en vez de quedarse para siempre con la
+    copia local que tenian desde la ultima vez que alguien se las copio a
+    mano. Solo la PC 'administrativa' (la que tiene Excel + xlwings +
+    playwright y corre el pipeline todos los dias) tiene el dato mas fresco;
+    esta ruta expone justamente ESE archivo para que ACTUALIZAR_TOTAL.bat lo
+    pueda descargar desde las demas -- ver 'sync_excel_desde_host' en
+    pa_config.json. Sin autenticacion a proposito: es consistente con el
+    resto de esta app (pensada para LAN interna, ver CLAUDE.md), no un
+    endpoint nuevo con un modelo de seguridad distinto."""
+    if not os.path.isfile(VACACIONES_DATA_FILE):
+        return jsonify({'ok': False, 'error': 'No hay Excel de vacaciones en esta instalacion.'}), 404
+    return send_file(VACACIONES_DATA_FILE, as_attachment=True,
+                      download_name=os.path.basename(VACACIONES_DATA_FILE))
+
+
 @app.route('/api/diagnostico/kpis')
 def api_diagnostico_kpis():
     """Traza de donde sale cada numero de los KPIs de vacaciones, para poder
