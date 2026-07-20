@@ -86,11 +86,70 @@ foreach ($c in $candidatosRaw) {
     }
 }
 $candidatos = @($candidatos | Where-Object { Test-Path (Join-Path $_.ruta $exeName) })
+
+# Busqueda extra (recursiva, limitada) en Desktop/Downloads/Documents antes de
+# rendirse y pedir la ruta a mano -- cubre el caso real de una instalacion
+# portable/extraida en un lugar no estandar (paso con una copia en Downloads).
 if (-not $candidatos -or $candidatos.Count -eq 0) {
-    $manual = Read-Host "    No se encontro instalacion automaticamente. Pega la ruta de la carpeta (donde esta el .exe)"
+    Write-Host "    No se encontro en las rutas estandar, buscando en Escritorio/Descargas/Documentos..."
+    $raicesBusqueda = @(
+        [Environment]::GetFolderPath('Desktop'),
+        (Join-Path $env:USERPROFILE 'Downloads'),
+        [Environment]::GetFolderPath('MyDocuments')
+    ) | Where-Object { $_ -and (Test-Path $_) }
+    $encontrados = @()
+    foreach ($raiz in $raicesBusqueda) {
+        $encontrados += Get-ChildItem -Path $raiz -Filter $exeName -Recurse -Depth 3 -File -ErrorAction SilentlyContinue
+    }
+    foreach ($f in $encontrados) {
+        Add-Candidato (Split-Path $f.FullName -Parent) 'Encontrado por busqueda en Escritorio/Descargas/Documentos'
+    }
+    if ($encontrados.Count -gt 0) {
+        $vistos = @{}
+        $candidatos = @()
+        foreach ($c in $candidatosRaw) {
+            try { $abs = (Resolve-Path -LiteralPath $c.ruta -ErrorAction Stop).Path } catch { $abs = $c.ruta }
+            $key = $abs.ToLowerInvariant()
+            if (-not $vistos.ContainsKey($key) -and (Test-Path $abs)) {
+                $vistos[$key] = $true
+                $candidatos += [pscustomobject]@{ ruta = $abs; etiqueta = $c.etiqueta }
+            }
+        }
+        $candidatos = @($candidatos | Where-Object { Test-Path (Join-Path $_.ruta $exeName) })
+    }
+}
+
+if (-not $candidatos -or $candidatos.Count -eq 0) {
+    $manual = Read-Host "    No se encontro instalacion automaticamente. Pega la ruta de la carpeta (donde esta el .exe) o de un instalador descargado"
     if ($manual) {
         $manual = $manual.Trim().Trim('"').TrimEnd('\')
-        if (Test-Path $manual) { $candidatos = @([pscustomobject]@{ ruta = $manual; etiqueta = 'Ruta indicada manualmente' }) }
+        if (Test-Path (Join-Path $manual $exeName)) {
+            # La ruta SI tiene la app instalada (el .exe real, no un instalador).
+            $candidatos = @([pscustomobject]@{ ruta = $manual; etiqueta = 'Ruta indicada manualmente' })
+        } elseif (Test-Path $manual) {
+            # La carpeta existe pero no tiene "Sistema Vacaciones USIL.exe" -- lo mas
+            # probable (paso en la practica) es que ahi solo este el INSTALADOR
+            # descargado (ej. "Sistema Vacaciones USIL Setup 1.0.0.exe"), no la app ya
+            # instalada. Actualizar codigo sobre eso no tiene sentido: hay que CORRER
+            # el instalador primero, no apuntarlo con este script.
+            $instaladorEncontrado = Get-ChildItem -Path $manual -Filter '*Setup*.exe' -File -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            Write-Host ""
+            Write-Host "[ERROR] En '$manual' no esta '$exeName' (la app YA instalada)."
+            if ($instaladorEncontrado) {
+                Write-Host "    Lo que SI encontre ahi es el INSTALADOR: $($instaladorEncontrado.Name)"
+                Write-Host "    Eso no se actualiza con este script -- hay que EJECUTARLO (doble clic)"
+                Write-Host "    para instalar el programa completo por primera vez. Una vez instalado,"
+                Write-Host "    vuelve a correr ACTUALIZAR_TOTAL.bat y ahi si lo va a encontrar solo."
+            } else {
+                Write-Host "    Esa carpeta no tiene ni la app instalada ni un instalador reconocible."
+                Write-Host "    Busca el icono 'Sistema de Vacaciones USIL' del Escritorio, clic derecho ->"
+                Write-Host "    Abrir ubicacion del archivo, y pega ESA ruta la proxima vez."
+            }
+            Write-Host ""
+            Read-Host "Presiona Enter para cerrar"
+            exit 1
+        }
     }
 }
 if (-not $candidatos -or $candidatos.Count -eq 0) {
