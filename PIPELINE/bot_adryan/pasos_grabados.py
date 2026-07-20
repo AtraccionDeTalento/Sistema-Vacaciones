@@ -10,7 +10,7 @@ def run(playwright: Playwright) -> None:
     page.get_by_role("textbox", name="Usuario Usuario").click()
     page.get_by_role("textbox", name="Usuario Usuario").fill("JLOPEZL4")
     page.get_by_role("textbox", name="Contraseña Nueva Contraseña").click()
-    page.get_by_role("textbox", name="Contraseña Nueva Contraseña").fill("34frDA@#123")
+    page.get_by_role("textbox", name="Contraseña Nueva Contraseña").fill("***REDACTED*** (guardada cifrada en cred_adryan.bin / pa_config.json)")
     page.get_by_role("button", name="INICIAR SESIÓN").click()
     page.get_by_role("link", description="Personal", exact=True).click()
     page.get_by_role("link", name="Vacaciones por Ejercicio").click()

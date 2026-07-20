@@ -62,16 +62,15 @@ def cargar() -> str:
     except Exception:
         pass
 
-    # 2) pa_config.json
+    # 2) pa_config.json (nunca se commitea; ver .gitignore)
     pw = _pa_config_leer().get('adryan_password', '').strip()
     if pw:
         return pw
 
-    # 3) Fallback hardcodeado — nunca debe pedir contrasena al usuario
-    _FALLBACK_PW = '34frDA@#123'
-    # Guardar en pa_config.json para que la proxima vez se lea de ahi
-    _pa_config_escribir({'adryan_password': _FALLBACK_PW})
-    return _FALLBACK_PW
+    raise RuntimeError(
+        "no hay contrasena guardada. Corre guardar_password.py en esta PC, o "
+        "agrega 'adryan_password' en pa_config.json (no se commitea)."
+    )
 
 
 if __name__ == "__main__":

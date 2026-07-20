@@ -32,6 +32,7 @@ PIPELINE/bot_adryan/sesion_adryan.json
 PIPELINE/bot_adryan/config_bot.json
 PIPELINE/bot_adryan/estado_bot.json
 PIPELINE/bot_adryan/cred_adryan.bin
+PIPELINE/bot_adryan/CREDENTIALS.txt
 PIPELINE/estado_pipeline.json
 
 # Logs
