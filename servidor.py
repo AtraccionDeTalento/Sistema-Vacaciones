@@ -14641,6 +14641,15 @@ def _meta_vac_data():
             bg_mats = set()
             bg_mats_cesados = set()
             mats_activas = _maestro_matriculas_activas()
+            # 'Bruto' = mismo universo que el Excel crudo (incluye cesados y colegio),
+            # para el KPI de "Avance de meta" -- ver _kpis_vacaciones(). Se acumula en
+            # esta misma pasada, SIEMPRE con dias independientes (reg_hasta_corte,
+            # sumados en Python desde la hoja 'base'), nunca desde la celda de formula
+            # VLOOKUP de la columna T de BASE GENERAL, que se demostro fragil (una
+            # corrida de pipeline.py por COM puede dejarla mal recalculada y producir
+            # un avance corrupto aunque el Excel se lea "en vivo" sin cache de por medio).
+            bruto_meta_total = 0.0
+            bruto_goz_total = 0.0
             if 'BASE GENERAL' in wb.sheetnames:
                 g = wb['BASE GENERAL']
                 def _num(v):
@@ -14664,6 +14673,11 @@ def _meta_vac_data():
                     # de BASE GENERAL en produccion no siempre trae (a).
                     es_cesado = _bg_es_cesado(_v(r, 'activo')) or (
                         mats_activas is not None and mat_str not in mats_activas)
+                    obj_bruto = _num(_v(r, 'objetivo'))
+                    if obj_bruto > 0:
+                        reg_bruto = reg_hasta_corte.get(mat_str, _num(_v(r, 'registradas')))
+                        bruto_meta_total += obj_bruto
+                        bruto_goz_total += min(reg_bruto, obj_bruto)
                     if es_cesado:
                         # Ya ceso: no cuenta aunque tenga meta asignada. Se marca aparte
                         # (no en bg_mats) para que el bloque de 'fantasmas' de abajo no lo
@@ -14787,6 +14801,10 @@ def _meta_vac_data():
                 'dias_gozados_parciales': round(sum(x.get('dias_gozados', 0) or 0 for x in parciales_rows)),
                 'dias_meta_parciales':    round(sum(x.get('objetivo', 0) or 0 for x in parciales_rows)),
                 'dias_gozados_sin_meta':  round(sum(x.get('dias_gozados', 0) or 0 for x in sin_meta_rows)),
+                # 'bruto': universo amplio (incluye cesados + colegio), calculado 100%
+                # en Python -- reemplaza la celda de formula Excel para "Avance de meta".
+                'dias_meta_bruto_total':    round(bruto_meta_total),
+                'dias_gozados_bruto_total': round(bruto_goz_total),
             }
             data = {'counts': counts, 'rows': rows}
             with _META_LOCK:
@@ -14963,21 +14981,6 @@ def _kpis_vacaciones():
             # read_only=True acelera la carga (no carga estilos ni pivot caches)
             wb = openpyxl.load_workbook(tmpp, data_only=True, read_only=True)
             kp = {}
-            if 'BASE GENERAL' in wb.sheetnames:
-                g = wb['BASE GENERAL']
-                # Columnas por encabezado (fila 2), no por posicion fija (Q1/T1/W1): la
-                # plantilla ha ganado columnas nuevas y eso corrio todo lo de despues.
-                header = next(g.iter_rows(min_row=2, max_row=2, values_only=True), [])
-                c = _bg_col_map(header)
-                row1 = next(g.iter_rows(min_row=1, max_row=1, values_only=True))
-                def _v1(key):
-                    i = c.get(key)
-                    return row1[i] if (i is not None and i < len(row1)) else None
-                meta_total = _v1('objetivo')
-                registrado_total = _v1('registradas')
-                kp['meta_total']       = meta_total
-                kp['registrado_total'] = registrado_total
-                kp['avance'] = (registrado_total / meta_total) if meta_total else None
             if 'R_Cumplimiento' in wb.sheetnames:
                 rc = wb['R_Cumplimiento']
                 # E9 = fila 9 col 5
@@ -14986,34 +14989,44 @@ def _kpis_vacaciones():
                     break
             wb.close()
 
-            # Misma validacion cruzada que para estado_pipeline.json, aplicada aqui
-            # tambien: se demostro con un caso real que la fila 1 de BASE GENERAL
-            # (la celda de formula de la que sale este 'avance') puede quedar
-            # guardada con un valor corrupto (de un pipeline.py que corrio por COM
-            # y no termino de recalcular bien) -- y como esta funcion lee esa celda
-            # tal cual esta en el archivo, un Excel corrupto produce el MISMO numero
-            # malo aunque se lea "en vivo" sin ningun cache de por medio. A
-            # diferencia del JSON, aqui NO se descarta el valor (el proposito de
-            # este KPI es justamente calzar con la celda cruda del Excel, a
-            # proposito incluye cesados/colegio -- ver index_vacaciones.html), pero
-            # se marca como sospechoso para que la UI pueda avisar en vez de mostrar
-            # un numero imposible con total confianza.
+            # 'Avance de meta' (meta_total/registrado_total/avance) YA NO se lee de la
+            # celda de formula Q1/T1 de BASE GENERAL: se demostro con un caso real que
+            # esa celda puede quedar guardada con un valor corrupto (un pipeline.py que
+            # corrio por COM sobre Excel y no termino de recalcular bien el VLOOKUP de
+            # la columna T) -- y como antes esta funcion leia esa celda tal cual, un
+            # Excel mal recalculado producia el MISMO numero malo aunque se leyera "en
+            # vivo" sin ningun cache de por medio (paso en la practica: 90.2%/93.5% de
+            # avance sin ninguna razon real). Ahora se usa el total 'bruto' que arma
+            # _meta_vac_data() en la MISMA pasada por la hoja 'base' (independiente de
+            # cualquier formula de Excel), sobre el mismo universo amplio de siempre
+            # (incluye cesados y colegio, a proposito para calzar con el Excel crudo).
+            md_bruto = _meta_vac_data()
+            counts_bruto = (md_bruto or {}).get('counts') or {}
+            meta_total = counts_bruto.get('dias_meta_bruto_total')
+            registrado_total = counts_bruto.get('dias_gozados_bruto_total')
+            kp['meta_total']       = meta_total
+            kp['registrado_total'] = registrado_total
+            kp['avance'] = (registrado_total / meta_total) if meta_total else None
+
+            # Validacion cruzada contra el universo "con meta" (mas angosto, sin
+            # cesados/colegio) -- se conserva como salvaguarda adicional: si algun dia
+            # este calculo 'bruto' y el de con_meta_rows divergen mucho, algo mas raro
+            # esta pasando (ej. un maestro de personal corrupto/vacio) y hay que avisar
+            # en vez de mostrar el numero con confianza ciega.
             kp['sospechoso_inconsistente'] = False
             if kp.get('avance') is not None:
                 try:
-                    md_ref = _meta_vac_data()
-                    counts_ref = (md_ref or {}).get('counts') or {}
-                    meta_ref = counts_ref.get('dias_meta_total') or 0
-                    goz_ref = counts_ref.get('dias_gozados_con_meta') or 0
+                    meta_ref = counts_bruto.get('dias_meta_total') or 0
+                    goz_ref = counts_bruto.get('dias_gozados_con_meta') or 0
                     if meta_ref > 0:
                         avance_ref = goz_ref / meta_ref
                         if abs(kp['avance'] - avance_ref) > 0.20:
                             kp['sospechoso_inconsistente'] = True
-                            print(f"[PIPE-KPI] AVISO: avance del Excel en vivo ({kp['avance']:.1%}) "
-                                  f"difiere >20pp de la referencia calculada ({avance_ref:.1%}) -- "
-                                  f"la celda de BASE GENERAL puede estar corrupta, revisar el Excel.")
+                            print(f"[PIPE-KPI] AVISO: avance bruto ({kp['avance']:.1%}) "
+                                  f"difiere >20pp de la referencia con_meta ({avance_ref:.1%}) -- "
+                                  f"revisar el maestro de personal / BASE GENERAL.")
                 except Exception as e:
-                    print('[PIPE-KPI] no se pudo validar avance en vivo contra meta_vac_data:', e)
+                    print('[PIPE-KPI] no se pudo validar avance bruto contra con_meta:', e)
 
             with _KPIS_LOCK:
                 _KPIS_CACHE['mtime'] = cur_mt
