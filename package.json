@@ -83,7 +83,11 @@
           "!PIPELINE/SUBIDOS/**",
           "!PIPELINE/DATOS ACTUALIZADOS/**",
           "!PIPELINE/bot_adryan/logs/**",
-          "!PIPELINE/RESPALDOS/**"
+          "!PIPELINE/RESPALDOS/**",
+          "!_RESPALDO_LIMPIEZA_*/**",
+          "!scratch/**",
+          "!pruebas/**",
+          "!*.zip"
         ]
       }
     ]
