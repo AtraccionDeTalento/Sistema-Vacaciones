@@ -17,8 +17,16 @@
     return Math.round(v).toLocaleString('es-PE');
   }
   function pickAvance(kp) {
+    // Siempre kp.avance (calculado 100% en Python, independiente de cualquier
+    // formula de Excel -- ver _kpis_vacaciones() en servidor.py). ANTES prefeia
+    // kp.avance_cumplimiento (celda R_Cumplimiento!E9, otro pivot de Excel con
+    // la MISMA fragilidad que ya se corrigio para BASE GENERAL): eso hacia que
+    // este panel mostrara un numero distinto al de la tarjeta principal del
+    // dashboard (ej. 91.1% aqui vs 58.7% arriba, con los mismos dias de base) --
+    // no es un metric distinto a proposito, es la misma "avance de meta" leida
+    // de una fuente redundante y no confiable. No usar avance_cumplimiento aqui.
     if (!kp) return null;
-    var v = (kp.avance_cumplimiento != null) ? kp.avance_cumplimiento : kp.avance;
+    var v = kp.avance;
     return (typeof v === 'number') ? v : null;
   }
 
